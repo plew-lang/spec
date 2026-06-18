@@ -232,4 +232,4 @@ declarative な C/C++ ブロックは **vendored な小〜中規模 C**（amalga
 
 ## 越境メタプログラミング
 
-依存が公開する `Derive` を消費側の型に当てる場合も `.gen.pw` コミットモデル（生成は当てる型を持つ**消費側**で起き `.gen.pw` を消費側にコミット・`@Std/Syntax` は各 derive の依存版で隔離実行・derive はホスト実行）を使います。複数バージョン共存と String 境界で両立します。→ [メタプログラミング](16-metaprogramming.md)。
+依存が公開する `Derive` を消費側の型に当てる場合も `.gen.pw` コミットモデル（生成は当てる型を持つ**消費側**で起き `.gen.pw` を消費側にコミット・`@Plew/Syntax` は各 derive の依存版で隔離実行・derive はホスト実行）を使います。複数バージョン共存と String 境界で両立します。→ [メタプログラミング](16-metaprogramming.md)。

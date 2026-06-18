@@ -1,6 +1,6 @@
 # メタプログラミング
 
-> **状態: 方針確定・基盤実装済（M1＋共有パーサ統合済）。** 当初の「閉じたメタプログラミング」（言語提供の `@[...]` のみ）から、**ユーザー定義可能なメタプログラミング**へ転換し、その骨格（入出力モデル・出力先・取り込み方法・実行モデル）を確定した。本章はその確定方針の正典。**入力はかつて `TokenStream` だったが、AST 構文ライブラリを共有する設計（下記）に伴い `AST`（構文木＝`TopItemAst`）に確定**した。**実装済**＝`plewc --gen` モード＋共有 `@Std/Syntax`（レクサ＋値ツリー AST＋宣言/本体/トップレベルパーサ `parseProgramAst`/`parseItem`）＋ローダ自動 part＋`plew gen` ランナーで、**マクロが注釈対象項の実構造（型名・フィールド名/型/可視性・enum バリアント/ペイロード・fn シグネチャ＋本体・impl のメンバ・trait の要求）を読んで生成し、`@[Name(label: expr)]` のディレクティブ引数も `self` から読める**まで貫通する（`@[Name]`→`<Foo>.gen.pw`→通常ビルドで取り込み）。**コンパイラ本体もこの共有パーサで構文解析する（真の 1 AST＝重複パーサなし）**＝マクロが見るのはコンパイラが見た構文そのもの。注釈対象は struct/enum/fn に加え **impl/trait** も可。`quote` 等 authoring 層・生成コマンド設定など**細部はなお未決**で末尾に残す。実装の段取り・実行系の具体は [claude/metaprogramming-architecture.md](../../claude/metaprogramming-architecture.md)。
+> **状態: 方針確定・基盤実装済（M1＋共有パーサ統合済）。** 当初の「閉じたメタプログラミング」（言語提供の `@[...]` のみ）から、**ユーザー定義可能なメタプログラミング**へ転換し、その骨格（入出力モデル・出力先・取り込み方法・実行モデル）を確定した。本章はその確定方針の正典。**入力はかつて `TokenStream` だったが、AST 構文ライブラリを共有する設計（下記）に伴い `AST`（構文木＝`TopItemAst`）に確定**した。**実装済**＝`plewc --gen` モード＋共有 `@Plew/Syntax`（レクサ＋値ツリー AST＋宣言/本体/トップレベルパーサ `parseProgramAst`/`parseItem`）＋ローダ自動 part＋`plew gen` ランナーで、**マクロが注釈対象項の実構造（型名・フィールド名/型/可視性・enum バリアント/ペイロード・fn シグネチャ＋本体・impl のメンバ・trait の要求）を読んで生成し、`@[Name(label: expr)]` のディレクティブ引数も `self` から読める**まで貫通する（`@[Name]`→`<Foo>.gen.pw`→通常ビルドで取り込み）。**コンパイラ本体もこの共有パーサで構文解析する（真の 1 AST＝重複パーサなし）**＝マクロが見るのはコンパイラが見た構文そのもの。注釈対象は struct/enum/fn に加え **impl/trait** も可。`quote` 等 authoring 層・生成コマンド設定など**細部はなお未決**で末尾に残す。実装の段取り・実行系の具体は [claude/metaprogramming-architecture.md](../../claude/metaprogramming-architecture.md)。
 
 ## 組み込みディレクティブ `@[...]`
 
@@ -31,7 +31,7 @@ struct Point {
 
 ### マクロ = derive インターフェースの実装・入力は `AST`／出力は `String`
 
-**derive 可能性 = derive インターフェースを実装していること。** `@[X]` が有効なのは、**`X` が derive インターフェース（下記 `Derive` / `ParameterizedDerive`）を実装しているとき**だけ。`X` は **トレイトでも構造体でもよい**——`@[Hash]` の `Hash` は**トレイトそのもの**（`impl Hash as Derive` で「derive 可能」を後付け）、`@[All]` の `All` はトレイトを持たない**構造体**（`impl All as Derive`）。いずれも生成メソッド（要求＝`derive(input: TopItemAst) -> String`）を提供し、**注釈対象項の構文木を受け取り生成 Plew ソースを `String` で返す**。`Derive` 系トレイトと `AST` 型は**構文ライブラリ**（当面 `@Std/Syntax`・将来は外部共有パッケージ＝後述）が提供します。**入力型 = `TopItemAst`**（注釈対象のトップレベル項の値ツリー＝`Decl`〔struct/enum/fn〕・`Impl`・`Trait`・… のタグ付き union）。マクロは `match` で対象の種別に分岐する＝対象が何かを**明示**して扱う（struct 専用 derive は `Decl` だけ扱い他を弾く）。これは「コンパイラとマクロが唯一の同一 AST を読む（1 AST 原則）」の帰結で、マクロ専用の縮小 AST を作らない。
+**derive 可能性 = derive インターフェースを実装していること。** `@[X]` が有効なのは、**`X` が derive インターフェース（下記 `Derive` / `ParameterizedDerive`）を実装しているとき**だけ。`X` は **トレイトでも構造体でもよい**——`@[Hash]` の `Hash` は**トレイトそのもの**（`impl Hash as Derive` で「derive 可能」を後付け）、`@[All]` の `All` はトレイトを持たない**構造体**（`impl All as Derive`）。いずれも生成メソッド（要求＝`derive(input: TopItemAst) -> String`）を提供し、**注釈対象項の構文木を受け取り生成 Plew ソースを `String` で返す**。`Derive` 系トレイトと `AST` 型は**構文ライブラリ**（当面 `@Plew/Syntax`・将来は外部共有パッケージ＝後述）が提供します。**入力型 = `TopItemAst`**（注釈対象のトップレベル項の値ツリー＝`Decl`〔struct/enum/fn〕・`Impl`・`Trait`・… のタグ付き union）。マクロは `match` で対象の種別に分岐する＝対象が何かを**明示**して扱う（struct 専用 derive は `Decl` だけ扱い他を弾く）。これは「コンパイラとマクロが唯一の同一 AST を読む（1 AST 原則）」の帰結で、マクロ専用の縮小 AST を作らない。
 
 **derive インターフェースは「設定（引数）の有無」で 2 つに分かれる。** derive の唯一の本質的な軸は設定を持つかどうかで、それが invocation 構文に直結する：
 
@@ -62,7 +62,7 @@ pub impl Builder as ParameterizedDerive {
 struct Config { }
 ```
 
-注釈は struct / enum / fn だけでなく **`impl` ブロック・`trait`** にも付けられる（`@[Name] impl T { … }`・`@[Name] trait U { … }`）＝そのとき `input` は `TopItemAst.Impl` / `TopItemAst.Trait`。**`extern` ブロック内の不透明 lang-item / FFI 型**（`extern(plewIntrinsic) { @[Name] struct I8 }`・`extern(c) { @[Name] type … }`）にも付けられ、`input` は本体なし `struct` の `TopItemAst.Decl`（`d.name` ＝その型名）。これでコア床のプリミティブ型に derive で実装を生やせる（例＝`@[IntTryFrom(sources: […])] struct I8` が整数 narrowing `TryFrom` witness 群を生成）。derive マクロ自身は `@Std/Syntax`（→`@Std/Core`）に依存するので、その出力をコア床に取り込む循環は **生成物（`X.gen.pw`）をコミットする**ことで断つ（出荷物は生成された `impl` のみで構文ライブラリに依存しない）。なお derive がコア床の循環を踏むのは**生成物がツールチェーン自身のコンパイルに必要なとき**だけで（算術 witness はコアが内部使用するので循環＝独立したスタンドアロン生成器が要る）、`TryFrom` narrowing のようにコア／構文ライブラリが内部使用しないものは `@[...]` derive で生成できる。
+注釈は struct / enum / fn だけでなく **`impl` ブロック・`trait`** にも付けられる（`@[Name] impl T { … }`・`@[Name] trait U { … }`）＝そのとき `input` は `TopItemAst.Impl` / `TopItemAst.Trait`。**`extern` ブロック内の不透明 lang-item / FFI 型**（`extern(plewIntrinsic) { @[Name] struct I8 }`・`extern(c) { @[Name] type … }`）にも付けられ、`input` は本体なし `struct` の `TopItemAst.Decl`（`d.name` ＝その型名）。これでコア床のプリミティブ型に derive で実装を生やせる（例＝`@[IntTryFrom(sources: […])] struct I8` が整数 narrowing `TryFrom` witness 群を生成）。derive マクロ自身は `@Plew/Syntax`（→`@Std/Core`）に依存するので、その出力をコア床に取り込む循環は **生成物（`X.gen.pw`）をコミットする**ことで断つ（出荷物は生成された `impl` のみで構文ライブラリに依存しない）。なお derive がコア床の循環を踏むのは**生成物がツールチェーン自身のコンパイルに必要なとき**だけで（算術 witness はコアが内部使用するので循環＝独立したスタンドアロン生成器が要る）、`TryFrom` narrowing のようにコア／構文ライブラリが内部使用しないものは `@[...]` derive で生成できる。
 
 **なぜこの 2 分割か（trait と derive の同名衝突の解消）。** Plew は **型とトレイトが同一名前空間**なので、Rust 流に「`trait Hash` ＋ derive 用 `struct Hash`」を共存させられない（Rust はマクロ名前空間と型名前空間が別なので可能だが、Plew には無い）。そこで **derive を必ず構造体にする前提を外し、トレイト derive はトレイト自身が `assoc fn derive` を持つ**ことで `struct Hash` を不要にした＝`Hash` は 1 エンティティ（トレイト）のまま衝突しない。`All`/`Builder` のような**トレイトを持たない** derive だけが構造体（対応するトレイトが無いので衝突もしない）。**却下案**：(A) Rust 流の別名前空間＝Plew に無く、Core 内でモジュールを分けて名前空間で逃がすのは不自然。(C) trait と derive を別名（`@[DeriveEq]` 等）＝同名前空間なら筋は通るが、共通ケース（設定なし derive が大半）に恒久的な命名負担が乗り「`Eq` の derive は何という名前か」が毎回問われ混乱する。**採用**＝設定なしを無印 `Derive`（assoc）に置くことで共通ケースに修飾子が要らず、命名問題そのものが消える。→ [claude/design-decisions.md](../../claude/design-decisions.md)「trait と derive の同名」。
 
@@ -79,7 +79,7 @@ struct Config { }
 
 **String → AST 変換と受け渡しは derive インターフェースの提供メソッドが担う（中間層は不要）。** `Derive`（assoc）／`ParameterizedDerive`（instance）はそれぞれ**要求メソッド `derive(input: AST) -> String`**（ユーザー実装）に加え、**提供メソッド `deriveFromSource(source, span) -> String`**（構文ライブラリ提供＝「String を lex+parse して AST にし、`derive(input:)` へ委譲」）を持つ。ランナー（生成コマンド）はこの提供メソッドを呼ぶハーネスを合成・実行するだけ＝**ランナーは String↔String の版非依存な機械**で、AST 型に一切触れない（AST 型・parser はマクロが固定依存する構文ライブラリ版のもの）。詳細は architecture doc。
 
-**リッチな AST はコンパイラ外のライブラリに分離する（最終形）。** Rust が `rustc` と `syn` で**2 つのパーサ**を持ち同期に苦しむのを避けるため、Plew は self-host の利を活かし **lexer+parser+AST を 1 つのライブラリに切り出し、コンパイラもマクロもそれに依存**する構成を目指す（真実の源が 1 つ＝AST のバージョン違いのツラミを最小化）。ただし**現状パッケージ管理機構が無い**ため切り出しは後回しで、**当面は `@Std/Syntax`（in-tree）が AST 型・lexer/parser・`Derive` 提供メソッドを持つ一時的な置き換え**（パッケージ管理導入後に外部共有パッケージへ昇格）。
+**リッチな AST はコンパイラ外のライブラリに分離する（最終形）。** Rust が `rustc` と `syn` で**2 つのパーサ**を持ち同期に苦しむのを避けるため、Plew は self-host の利を活かし **lexer+parser+AST を 1 つのライブラリに切り出し、コンパイラもマクロもそれに依存**する構成を目指す（真実の源が 1 つ＝AST のバージョン違いのツラミを最小化）。ただし**現状パッケージ管理機構が無い**ため切り出しは後回しで、**当面は `@Plew/Syntax`（in-tree）が AST 型・lexer/parser・`Derive` 提供メソッドを持つ一時的な置き換え**（パッケージ管理導入後に外部共有パッケージへ昇格）。
 
 ### 出力モデル：別ファイル・原本不変・add-only（透明性の要）
 
@@ -113,12 +113,12 @@ struct Config { }
 - ディレクティブ引数＝`ParameterizedDerive` マクロ struct のフィールド（`@[Name(a:32)]`＝`Name{a:32}.derive(...)`）。
 - 出力＝**別ファイル `<Foo>.gen.pw`・原本不変・add-only**、`@[...]` でローダ自動 part。
 - ランナー（生成コマンド）＝**String↔String の版非依存な機械**（ハーネス合成→compile→run→stdout 回収）。AST 型・parser はマクロが固定依存する構文ライブラリ版のもの。
-- 構文ライブラリ＝当面 `@Std/Syntax`（in-tree）・最終形は外部共有パッケージ（コンパイラもマクロも依存）。
+- 構文ライブラリ＝当面 `@Plew/Syntax`（in-tree）・最終形は外部共有パッケージ（コンパイラもマクロも依存）。
 - 組み込み Eq/Ord/Hash は当面コンパイラ特権・将来 dogfood。
 
 ## 未決事項
 
-- **AST 構文木の具体形の細部**（入力型は **`TopItemAst`** に確定済＝`@Std/Syntax` の値ツリー。`Decl`〔`name`/`fields(name,type,vis)`/`variants`/fn シグネチャ＋本体〕・`Impl`〔`members`〕・`Trait`〔`reqs`〕…・全ノード原本座標 span。残るは各ノードのフィールド追加や型式 `TypeAst` の表現の磨き込み＝additive）。
+- **AST 構文木の具体形の細部**（入力型は **`TopItemAst`** に確定済＝`@Plew/Syntax` の値ツリー。`Decl`〔`name`/`fields(name,type,vis)`/`variants`/fn シグネチャ＋本体〕・`Impl`〔`members`〕・`Trait`〔`reqs`〕…・全ノード原本座標 span。残るは各ノードのフィールド追加や型式 `TypeAst` の表現の磨き込み＝additive）。
 - **`Derive` のトレイト名の最終確定**（**設定なし＝無印 `Derive`〔assoc〕・設定あり＝`ParameterizedDerive`〔instance〕** の方向は確定／正確な綴りは dogfood 着手時）。dogfood の前提として、**`Self` を含まないトレイト提供 `assoc fn` を、その trait 名で実体型なしに一意呼び出しする機構**が要る（`Hash.derive(input)`＝`impl Hash as Derive` が提供する唯一の deriver なのでディスパッチ不要・当面はメタ機構限定で実装可）。組み込み Eq/Ord/Hash が特権合成のうちは未着手で問題ない。
 - 生成コマンドの名前・設定方法・source の渡し方（stdin/ファイル/リテラル＝実装時に最も楽な形で確定）。
 - **authoring 層（将来・additive）**：`String` 直書きはシンタックスハイライトが効かない。テンプレートファイル方式（ほぼ Plew の雛形を読み込んで穴埋め）や opt-in の `quote` を**コアを汚さず後付け**で足す。コア（AST in / String out）は不変。
