@@ -83,7 +83,7 @@ fn main() -> Result[(), AppError] {   // Result を返すと main 内で try が
 
 **固定された小さな一覧**で、**ここに無いものはすべて通常のライブラリ＝明示 `import` が要ります**（`Random`・`Set`・`print` などは `@Std/…` から import。`Set` はリテラルを持たず辞書 `Dictionary` と対照的で、構文が参照しない＝言語アイテムではない）。判定基準は「構文が参照するか」で sharp です。
 
-> **組み込みに見えるが import 必須なもの**（基準の帰結・混同しやすいので明示）：`Ordering`（`< > <= >=` は脱糖表を介すが結果は `Bool`・`Ordering` 値を生む構文は無い＝Rust の `std::cmp::Ordering` と同じく import。三方比較を名指すときだけ要）／`Ref`・`WeakRef`（汎用 factory `<Ref value=…/>` で**名指す**だけで専用リテラルが無い＝表現が祝福プリミティブでも ambient ではない）／`RawBuffer`（`Array` の内部床・利用者が直接使うときは import）。いずれも `@Std/Core` から import。
+> **組み込みに見えるが import 必須なもの**（基準の帰結・混同しやすいので明示）：`Ordering`（`< > <= >=` は脱糖表を介すが結果は `Bool`・`Ordering` 値を生む構文は無い＝Rust の `std::cmp::Ordering` と同じく import。三方比較を名指すときだけ要）／`Ref`・`WeakRef`（汎用 factory `<Ref value=…/>` で**名指す**だけで専用リテラルが無い＝表現が祝福プリミティブでも ambient ではない）／`Buffer`（Array/Dict/Set/String が共有する**安全な**可変長格納床＝`cap+count+rc`・自前コレクションを書くときだけ import。生メモリ確保や要素 ARC は不可視 witness 駆動で公開しない）。いずれも `@Std/Core` から import。
 
 > 言語アイテムは**言語が提供する唯一の ambient な名前**で、キーワードと同じくユーザーがこれに足したり別の ambient を作ったりはできません（自前定義は必ずモジュールスコープ）。出どころは「ローカル束縛 → ファイルの `import` → 言語アイテム」で常に辿れ、言語アイテム名はローカル再宣言（[shadowing](../01-basics/03-values.md#再宣言shadowing)）で覆えます。
 
@@ -363,7 +363,7 @@ import @Std/Testing with { expect, expectEq, expectNe, expectApprox }
 >
 > **スコープ＝外部を「使う側」のみ（Plew が C を呼ぶ）。** Plew 関数を C へ「使わせる側」（export＝Plew→C 公開）は**未定**で本節に含めない（既存 `export` キーワードとの整合・呼出規約・マングリングを別途詰める必要があり、現状の LLVM 利用には不要なため）。
 
-`extern(c)` 境界は **Plew の保証が切れる継ぎ目**です。境界の内側（値意味論・CoW・ARC・実質 race-free）はあくまで Plew が管理するメモリについての約束で、**外部 C 世界の確保・解放・別名・スレッド安全は Plew は一切引き受けません**（"hidden cost は可・hidden meaning は不可" の原則上、ここは唱えた通り＝**生で危険なものは生で危険**と見えるべき領域）。だから FFI は**床**として最小・正直に定義し、安全性は Plew 側で `unique`＋`deinit` を被せて作ります（`Array` が `RawBuffer` の上に・`String` が `bytes` の上に立つのと同じ構図）。
+`extern(c)` 境界は **Plew の保証が切れる継ぎ目**です。境界の内側（値意味論・CoW・ARC・実質 race-free）はあくまで Plew が管理するメモリについての約束で、**外部 C 世界の確保・解放・別名・スレッド安全は Plew は一切引き受けません**（"hidden cost は可・hidden meaning は不可" の原則上、ここは唱えた通り＝**生で危険なものは生で危険**と見えるべき領域）。だから FFI は**床**として最小・正直に定義し、安全性は Plew 側で `unique`＋`deinit` を被せて作ります（安全な `Array`/`String` が**コンパイラ内部の生メモリ操作**の上に安全床 `Buffer` を介して立つのと同じ"生床＋安全皮"の構図＝Plew では生操作はコンパイラ内部に隠れ、FFI ではそれが明示 opt-in の境界として露出する）。
 
 ### ABI 選択子はクォートなしの bareword（`extern(c)`）
 
@@ -437,7 +437,7 @@ fn buildAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name:
 
 ### C ポインタ `CPtr[T]` / `CMutPtr[T]` / `COpaque`
 
-中身を持つポインタ・配列・out 引数のための生ポインタ型。`RawBuffer`/`Ref` と同格の**コンパイラ組み込みプリミティブ**（属性魔法でなく型語彙）。C の `const` 有無を**読む権利／書く権利**として保つ（Plew の `borrow`/`inout`・shared/unique と同じ軸・bindgen で `.h` を 1:1 に写すため）。
+中身を持つポインタ・配列・out 引数のための生ポインタ型。`Buffer`/`Ref` と同格の**コンパイラ組み込みプリミティブ**（属性魔法でなく型語彙。ただし `Buffer` は安全床・`CPtr` は明示 opt-in の unsafe 境界＝役割は別）。C の `const` 有無を**読む権利／書く権利**として保つ（Plew の `borrow`/`inout`・shared/unique と同じ軸・bindgen で `.h` を 1:1 に写すため）。
 
 | C | Plew | 意味 |
 |---|---|---|
@@ -447,7 +447,7 @@ fn buildAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name:
 
 - **無印が読み取り専用**＝危険な方（可変）を長い名前で明示（`mut val` で可変を明示するのと同じ流儀）。
 - `T` は数値・`repr(c)` struct・不透明ハンドル・別のポインタ（`LLVMValueRef *Args` → `CPtr[LLVMValueRef]`）いずれも可。
-- 表層アプリコードは `CPtr` を見ない。触るのは `extern` ブロックと薄いグルー層だけ（Plew の「生ポインタ無し」は**表層**の約束で、床には `RawBuffer` 同様に在ってよい）。
+- 表層アプリコードは `CPtr` を見ない。触るのは `extern` ブロックと薄いグルー層だけ（Plew の「生ポインタ無し」は**表層**の約束で、生ポインタはコレクション床の生メモリ操作と同様に**床／境界**に在ってよい＝コレクションでは床はコンパイラ内部に隠れ、FFI では明示 opt-in の `extern` 境界として露出する）。
 - **生ポインタ/ハンドルは「null を取り得る」値**（raw pointer なので当然）。非 null を装う別型は持たず、**取り出しが `Optional`** になる（下記 NULL）。
 - `Array[T]` の連続記憶を渡すときは床経由で基底ポインタを一時的に借りる（寿命は呼び出し中だけ・詳細は点3/4）。
 
