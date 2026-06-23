@@ -80,7 +80,7 @@ NaN だけは別扱いで、Plew は **NaN を比較した時点で panic** し�
 
 `String` は**不変**な UTF-8 文字列で、**CoW 値型**です。一度作った中身は変わらず、加工（連結・変換・部分取り出し等）は新しい `String` を返します。不変にしているのは UTF-8 妥当性の不変条件を保ちやすく `==` がバイト等価で済むためです（値意味論なので「参照＋可変＋共有」のエイリアス footgun は無く、Swift 流の可変 CoW String も将来は選べますが、当面は不変を維持します）。
 
-`String` は**特別な組み込みではなく、`Array[U8]` を内部に持つ普通の値型**です ── 値意味論・CoW・ARC（共有と解放）は内側の `Array[U8]` からそのまま受け継ぎ、`Array` とまったく同じ機構に乗ります。「`String` は不変だから共有が安全」というのは「`Array` も CoW なので共有中は実質不変で安全」というのと**同じ話**で、観測挙動も同じ。違うのは**機構だけ**です：`Array` は `append`/`arr[i] = x` で**既存の値をその場で変異**する（共有していれば CoW で複製してから書く）のに対し、`String` の加工（`+` 等）は**新しい `String` を返す**だけで既存の値を in-place で書き換えません（`str += x` も `str = str + x`＝**変数の再束縛**で、変数 `str` の指す先は変わるが既存の `String` 値は不変）。だから `String` には CoW の「書く瞬間の複製」点が無い ── ただしこれは現設計の選択で、将来 `+=` 等を内部 `Array` への in-place append＋CoW にすれば `String` も `Array` と同じ変異点を持てます。
+`String` は**特別な組み込み文字列オブジェクトではなく、private な UTF-8 byte storage を持つ普通の値型**です。現行の大文字列表現は `Buffer[U8]` に乗り、値意味論・CoW・ARC（共有と解放）は `Array`/`Dictionary` と同じ安全床から受け継ぎます。「`String` は不変だから共有が安全」というのは「`Array` も CoW なので共有中は実質不変で安全」というのと**同じ話**で、観測挙動も同じ。違うのは**公開する意味**です：`Array` は `append`/`arr[i] = x` で**既存の値をその場で変異**する（共有していれば CoW で複製してから書く）のに対し、`String` の加工（`+` 等）は**新しい `String` を返す**だけで既存の値を in-place で書き換えません（`str += x` も `str = str + x`＝**変数の再束縛**で、変数 `str` の指す先は変わるが既存の `String` 値は不変）。だから `String` には公開 API 上の CoW の「書く瞬間の複製」点が無い ── ただしこれは現設計の選択で、将来 `+=` 等を内部 storage への in-place append＋CoW にすれば `String` も `Array` と同じ変異点を持てます。
 
 ### 表現と妥当性
 
@@ -88,12 +88,12 @@ NaN だけは別扱いで、Plew は **NaN を比較した時点で panic** し�
 
 ```plew
 struct String {
-    val buffer: Array[U8]   // UTF-8 バイト列（常に妥当）— private
+    val buffer: Buffer[U8]  // UTF-8 バイト列（常に妥当）— private
 }
 ```
 
-- **`buffer` は private**：プログラマは内部バッファに触れず、UTF-8 安全な操作だけを使う。表現を隠すのは ① UTF-8 妥当性の不変条件を `String` の操作だけで守るため、② **将来「短い文字列をヒープに載せずインライン化する（small-string 最適化）」を後方互換のまま入れられる**ようにするため（その段で `String` の表現は `enum { Large(Array[U8]) | Small(…) }` のような判別形へ変わり得るが、`buffer` を公開していなければ利用側コードは無傷）。
-- バイト列は **メソッド `bytes() -> Array[U8]`** で得る（`s.bytes()`）。`buffer` は private なので公開フィールドではなく**メソッド**（Plew に computed property は無く、computed 値はメソッド・stored だけ `pub(get)` フィールド）。可変な配列が欲しければ `mut val b = s.bytes()`（値意味論＝CoW で、変更するときにだけ複製される＝`String` 自体は不変のまま）。現表現では O(1)（内部 `Array` を CoW 共有で返すだけ・`s.bytes().count` も O(1)）。〔small-string 最適化を入れた段では、短い文字列の `bytes()` は inline バイトから `Array` を作るため確保を伴い得る。〕
+- **`buffer` は private**：プログラマは内部バッファに触れず、UTF-8 安全な操作だけを使う。表現を隠すのは ① UTF-8 妥当性の不変条件を `String` の操作だけで守るため、② `String` を `Array[U8]` の皮にせず、文字列専用の表現変更を後方互換で可能にするため、③ **将来「短い文字列をヒープに載せずインライン化する（small-string 最適化）」を後方互換のまま入れられる**ようにするため（その段で `String` の表現は `enum { Large(Buffer[U8]) | Small(…) }` のような判別形へ変わり得るが、`buffer` を公開していなければ利用側コードは無傷）。
+- バイト列は **メソッド `bytes() -> Array[U8]`** で得る（`s.bytes()`）。`buffer` は private なので公開フィールドではなく**メソッド**（Plew に computed property は無く、computed 値はメソッド・stored だけ `pub(get)` フィールド）。可変な配列が欲しければ `mut val b = s.bytes()`（値意味論＝CoW で、変更するときにだけ複製される＝`String` 自体は不変のまま）。現行の大文字列表現では O(1)（`String` の `Buffer[U8]` と返す `Array[U8]` が同じ backing を CoW 共有するだけ・`s.bytes().count` も O(1)）。〔small-string 最適化を入れた段では、短い文字列の `bytes()` は inline バイトから `Array` を作るため確保を伴い得る。〕
 - **任意バイトからの公開生成は持たない**（不変条件を破るため）。生成は文字列リテラルと、検証する失敗し得る factory（例 `String.fromBytes(bytes:) -> Result[String, Utf8Error]`、名称暫定）に限る。
 - **入力を正規化しない**：来たバイトをそのまま保持する（下記の等価と整合）。
 
@@ -152,6 +152,59 @@ trait Format {
 - 文字列リテラルは**生の改行をそのまま含められます**（複数行可）。一方で**行末の `\` は続く改行と次行の先頭空白を取り除き**、改行を入れずにソース上で折り返せます（どちらも Rust と同じ）。
 
 ## 複合型
+
+### Buffer
+
+`Buffer[T]` は copyable `T` のための、動的・伸長可能・連続な **CoW 値型の格納床**です。`Array`、`Dictionary`、`Set`、`String` が内部で用いますが、ユーザーも `@Std/Core` から import して自作コレクションを実装できます。生スロット・pointer・borrow・未初期化領域・手書き retain/release は公開しません。添字と `count` は `Array` と同じく `U64` です。
+
+```plew
+import @Std/Core with { Buffer }
+
+mut val buffer: Buffer[I64] = <Buffer.withCapacity capacity=16U64 />
+buffer.append(42I64)
+val first = buffer[0U64]
+```
+
+#### 生成・観測・容量
+
+| API | 契約 |
+|---|---|
+| `factory new()` | 空の Buffer を作る。`count == 0` かつ `capacity == 0`。物理確保を行うかは未規定。 |
+| `factory withCapacity(capacity: U64)` | 空の Buffer を作る。成功時は `count == 0` かつ返値の `capacity` は要求値以上。 |
+| `count: U64` | 生きた要素数。常に `[0, count)` だけが読める。 |
+| `capacity: U64` | 現在の要素スロット数。常に `count <= capacity`。 |
+| `isEmpty: Bool` | `count == 0` と同値。 |
+| `inout fn reserve(additionalCapacity: U64)` | 成功時は `capacity >= count + additionalCapacity`。縮小しない。 |
+
+`withCapacity` / `reserve` の要求値は下限です。growth factor・丸め・余分な容量・再配置の有無は未規定で、CoW 共有中の変異では容量が足りていても privatize が必要になり得ます。`capacity` が十分でも allocator 呼び出し・privatize・再配置をしないことは保証しません。利用者が依存できるのは、成功後の論理的な容量関係だけです。
+
+要求要素数・`count + additionalCapacity`・要素サイズとの乗算・allocator の表現可能範囲のいずれかが上限を超える場合、または確保に失敗した場合、`withCapacity` / `reserve` および容量拡張を伴う mutator は panic します。`tryReserve` と公開 `maxCapacity` は v1 に設けません。panic 時は receiver を変更しません。派生算術はすべて checked に行い、オーバーフローをラップさせません。
+
+#### 読み・書き・追加
+
+| API | 成功時の意味 | panic |
+|---|---|---|
+| `fn get(index: U64) -> T` | `index` の値コピーを返す。Buffer はその要素を保持し続ける。 | `index >= count` |
+| `buffer[index] -> T` | `get(index:)` と同じ値返し。 | `index >= count` |
+| `inout fn set(index: U64, value~: T)` | `value` のコピーで slot を置換する。 | `index >= count` |
+| `buffer[index] = value` | `set(index:value:)` と同じ。 | `index >= count` |
+| `inout fn append(value~: T)` | 末尾に `value` のコピーを追加し、`count` を 1 増やす。 | 必要容量を確保できない場合 |
+| `inout fn insertAt(index: U64, value~: T)` | `index` 以降を右へずらし、そこへ `value` のコピーを挿入する。順序を保ち、`index == count` は append と同じ。 | `index > count`、または必要容量を確保できない場合 |
+
+`get` / `[]` は Optional を返しません。範囲外は panic とし、読みは常に値返しです。grow / realloc を跨ぐ borrow は提供しません。
+
+#### 削除
+
+| API | 空または範囲外 | 成功時の意味 |
+|---|---|---|
+| `inout fn pop() -> Optional[T]` | 空なら `Optional.None` | 末尾要素を削除し `Optional.Some` で返す。 |
+| `inout fn removeLast() -> T` | 空なら panic | 末尾要素を削除して返す。 |
+| `inout fn removeAt(index: U64) -> T` | `index >= count` なら panic | `index` の要素を削除して返す。後続要素を左へずらし、順序を保つ。 |
+| `inout fn swapRemove(index: U64) -> T` | `index >= count` なら panic | `index` の要素を削除して返す。末尾要素があればその slot へ移す。順序は保持しない。 |
+| `inout fn clear()` | 常に成功 | 全要素を削除する。操作後の capacity は未規定。 |
+| `inout fn truncate(count: U64)` | 常に成功 | `count < self.count` なら suffix `[count, self.count)` を削除する。`count >= self.count` なら no-op。操作後の capacity は未規定。 |
+
+返された `T` は呼び出し側が所有する独立した値であり、Buffer は削除後にその要素を保持しません。すべての mutator は、panic し得る前処理を済ませて操作後の有効状態を commit してから退役要素・旧 backing を release / drop します。最後の `Ref` release が `deinit` を起動して再入しても、再入側が観測する Buffer は操作後の有効状態です。
 
 ### 配列
 

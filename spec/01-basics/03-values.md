@@ -119,7 +119,7 @@ r->state = Connected         // -> で中身にアクセス（書き込みは全
 val r2 = r                   // ハンドルをコピー＝同じ箱を共有（参照カウント++）
 ```
 
-- `Ref[T]` は**祝福プリミティブ**（`Array` の生メモリ床と同様、純 Plew では書けない。`String` はその床の上の純 Plew 値型＝`struct String { buffer: Array[U8] }` なので祝福不要）。コピーで共有＋retain し、最後の解放で中身の `deinit` を走らせる。
+- `Ref[T]` は**祝福プリミティブ**（`Buffer` と同様、純 Plew では書けない。`String` はその安全床の上の純 Plew 値型＝`struct String { buffer: Buffer[U8] }` なので祝福不要）。コピーで共有＋retain し、最後の解放で中身の `deinit` を走らせる。
 - **`.` は Ref ハンドル自体への操作、`->` は中身（pointee）への操作**（C と同じ）。共有変異が `->` で構文的に明示され、値の `.` と区別されます。これが値意味論の中で「共有が起きる唯一の場所」を見えるようにしています。
 - **`val` な Ref 越しでも中身は変更できる**：Ref 束縛の `val`/`mut val` は **Ref 変数の再代入（`r = other`）** を gate するだけで、referent の変更（`r->x = v`・`inout fn` 呼び出し）は gate しません（Ref は共有可変が本分・Swift の `let class` と同じ）。値型の `val`（凍結）との非対称は、値 vs 参照の差を `Ref`＋`->` で可視化したものです。
 - **`move fn`（消費メソッド）は Ref 越しに呼べない**：共有された referent を消費すると他の `Ref` が無効化される（use-after-consume）ため、`Ref` 越しは `fn`/`inout fn` のみ。共有資源の後始末は **`deinit`（最後の `Ref` 解放時）** に委ねます。明示消費や失敗し得る `close() -> Result` が要るなら、共有せず裸の [`unique`](#uniqueコピー不可型) 値（唯一所有）で `move fn` を呼びます（共有時は「誰が close エラーを受けるか」が原理的に不定なので呼べないのが正しい）。〔additive：唯一保持なら中身を取り出す `tryUnwrap() -> Optional[T]` を後付けし得る。〕
