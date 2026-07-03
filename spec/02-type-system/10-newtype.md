@@ -26,17 +26,17 @@ newtype UserId = String
 // 標準ライブラリ側のイメージ
 impl F64 as Add[Self] {        // 同種同士の加算
     type Output = Self
-    assoc fn add(lhs: Self, rhs: Self) -> Self { ... }
+    assoc fn add(lhs~: Self, rhs~: Self) -> Self { ... }
 }
 impl F64 as Mul[F64] {         // スカラ倍（右オペランドは F64 据え置き）
     type Output = Self
-    assoc fn mul(lhs: Self, rhs: F64) -> Self { ... }
+    assoc fn mul(lhs~: Self, rhs~: F64) -> Self { ... }
 }
 
 newtype Meter = F64
 
 meter + meter   // Add[Self] → 置換され add(rhs: Meter) -> Meter   ✅ Meter
-meter * 2.0     // Mul[F64]（据え置き）→ mul(rhs: F64) -> Meter   ✅ Meter（2.0 はスカラのまま）
+meter * 2.0     // Mul[F64]（据え置き）→ mul(lhs~: Meter, rhs~: F64) -> Meter   ✅ Meter（2.0 はスカラのまま）
 meter * meter   // ✗ Mul[Meter] は無い（rhs に F64 を要求）→ meter * (meter as F64)
 ```
 

@@ -59,7 +59,7 @@ extension MathExtension {
     impl Person as Add[Person] {
         type Output = Person
         
-        assoc fn add(lhs: Person, rhs: Person) -> Person {
+        assoc fn add(lhs~: Person, rhs~: Person) -> Person {
             return <Person name="{lhs.name} & {rhs.name}" age=(lhs.age + rhs.age) />
         }
     }
