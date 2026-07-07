@@ -37,6 +37,8 @@ export enum Color[T] where T: Format {
 
 **列挙型ディレクティブ**: 詳細は今後決定予定（[メタプログラミング](../04-execution/16-metaprogramming.md) 参照）
 
+**`unique enum`**：struct と同様、`unique` を前置した enum は[コピー不可・move 専用](../01-basics/03-values.md#uniqueコピー不可型)（Swift の noncopyable enum と同型）。unique（または unique を推移的に含む型）をペイロードに持つ enum は `unique enum` 明示必須（伝染規則は struct のフィールドと同一）。
+
 ## フィールドの統一原則
 
 構造体と列挙型バリアントは、どちらも**名前付きフィールド**のみを持ちます。位置指向の無名ペイロード（`Some(T)` のようなもの）は書けません。生成と分解は両者で同じ構文に従います。**宣言だけは異なり**、バリアントのフィールドは修飾子なしの `field: Type` です（理由は下記）。
