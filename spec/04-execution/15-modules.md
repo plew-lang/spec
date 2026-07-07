@@ -395,10 +395,10 @@ extern(c) {
     type LLVMValueRef
 
     fn LLVMContextCreate() -> LLVMContextRef
-    fn LLVMModuleCreateWithNameInContext(name~: CString, ctx~: LLVMContextRef) -> LLVMModuleRef
+    fn LLVMModuleCreateWithNameInContext(name~: CPtr[U8], ctx~: LLVMContextRef) -> LLVMModuleRef
     fn LLVMDisposeModule(m~: LLVMModuleRef)
     fn LLVMCreateBuilderInContext(ctx~: LLVMContextRef) -> LLVMBuilderRef
-    fn LLVMBuildAdd(b~: LLVMBuilderRef, lhs~: LLVMValueRef, rhs~: LLVMValueRef, name~: CString) -> LLVMValueRef
+    fn LLVMBuildAdd(b~: LLVMBuilderRef, lhs~: LLVMValueRef, rhs~: LLVMValueRef, name~: CPtr[U8]) -> LLVMValueRef
 }
 ```
 
@@ -410,18 +410,19 @@ extern(c) {
 
 ```plew
 extern(c) {
-    fn LLVMBuildAdd(b~: LLVMBuilderRef, lhs~: LLVMValueRef, rhs~: LLVMValueRef, name~: CString) -> LLVMValueRef
+    fn LLVMBuildAdd(b~: LLVMBuilderRef, lhs~: LLVMValueRef, rhs~: LLVMValueRef, name~: CPtr[U8]) -> LLVMValueRef
     // fn LLVMBuildAdd(b: LLVMBuilderRef, …)  ← エラー：`b~:` と書く
 }
-// 呼び出しは positional：
-val sum = LLVMBuildAdd(builder, x, y, cString("sum"))
+// 呼び出しは positional（渡すのは所有 CString の借用ポインタ、点3）：
+val name: CString = <CString.copied text="sum" />
+val sum = LLVMBuildAdd(builder, x, y, name.ptr)
 ```
 
 可読性・引数取り違え防止のラベルが欲しければ、**Plew の `fn` ラッパに被せる**（生の `extern(c)` は C を正直に写す床／ラベルは安全な皮の層 ── 不透明ハンドル→`unique`、生ポインタ→`Optional` と同じ床/皮分離）：
 
 ```plew
-fn buildAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: CString) -> LLVMValueRef {
-    return LLVMBuildAdd(builder, lhs, rhs, name)
+fn buildAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name: borrow CString) -> LLVMValueRef {
+    return LLVMBuildAdd(builder, lhs, rhs, name.ptr)
 }
 ```
 
@@ -512,11 +513,12 @@ val mod: Optional[Module] = LLVMParseIRInContext(ctx, buf)
 // 二重解放は型で排除され、スコープを抜けると deinit が確実に Dispose する。
 unique struct Module {
     val raw: LLVMModuleRef
-    deinit { LLVMDisposeModule(m: self.raw) }
+    deinit { LLVMDisposeModule(self.raw) }
 }
 pub impl Module {
-    assoc fn create(name: CString, ctx: LLVMContextRef) -> Module {
-        return <Module raw=LLVMModuleCreateWithNameInContext(name, ctx) />
+    // 生成は factory（<Module name=… ctx=… /> で呼ぶ）── assoc fn を生成に流用しない（05 の factory 規約）。
+    factory(name: borrow CString, ctx: LLVMContextRef) {
+        return <Module raw=LLVMModuleCreateWithNameInContext(name.ptr, ctx) />
     }
 }
 ```
@@ -551,7 +553,7 @@ C 型 ↔ Plew 型は**2 階級**に分ける。
 **送る（Plew→C）**：NUL 終端バッファが要る。**`CString`＝所有する `unique` 値**（Plew String の UTF-8 コピー＋NUL を heap に持ち、`.ptr: CPtr[U8]` で渡す・`deinit` で解放）。寿命は **`CString` 値が生きている間**（レキシカルに明示）＝既存の `unique`/`deinit` だけで成立し新しい寿命機構は不要。
 
 ```plew
-val cname: CString = CString.from(text: "my.module")
+val cname: CString = <CString.copied text="my.module" />
 val m = LLVMModuleCreateWithNameInContext(cname.ptr, ctx)  // 呼び出し中有効
 // cname の deinit がスコープ末で解放
 ```
