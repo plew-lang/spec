@@ -551,7 +551,7 @@ C 型 ↔ Plew 型は**2 階級**に分ける。
 **送る（Plew→C）**：NUL 終端バッファが要る。**`CString`＝所有する `unique` 値**（Plew String の UTF-8 コピー＋NUL を heap に持ち、`.ptr: CPtr[U8]` で渡す・`deinit` で解放）。寿命は **`CString` 値が生きている間**（レキシカルに明示）＝既存の `unique`/`deinit` だけで成立し新しい寿命機構は不要。
 
 ```plew
-val cname: CString = CString.from(text~: "my.module")
+val cname: CString = CString.from(text: "my.module")
 val m = LLVMModuleCreateWithNameInContext(cname.ptr, ctx)  // 呼び出し中有効
 // cname の deinit がスコープ末で解放
 ```
