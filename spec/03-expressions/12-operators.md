@@ -308,16 +308,23 @@ trait Chain {
 }
 ```
 
-`receiver?.member` は次のように展開されます（`receiver: R` は `R: Chain`、式全体の結果型 `O` も `Chain` を実装する型）:
+`?.` は**直後の後置メンバアクセス連鎖全体**（`.field` / `.method(args)` / `[i]` / `->` の並び。次の `?.` が現れるまで）を取り込み、それをアンラップした値に適用します（Swift 式の伝播）。`receiver?.<cont>` は次のように展開されます（`receiver: R` は `R: Chain`、式全体の結果型 `O` も `Chain` を実装する型・`<cont>` はアンラップ値 `v` に根ざした後続アクセス）:
 
 ```plew
 match receiver.chain() {
-    Optional.Some(value: val v) => <O.fromValue value=v.member />
+    Optional.Some(value: val v) => <O.fromValue value=v.<cont> />
     Optional.None                  => <O.empty />
 }
 ```
 
-レシーバが空なら以降のアクセスは評価されず、式全体が空になります（短絡評価）。`chain()` が値を返したときだけメンバへアクセスし、結果を `fromValue` で包み直します（`fromValue` / `empty` は**factory なので JSX `<O.… />` で生成**し、構築点が見えます）。
+レシーバが空なら `<cont>` は評価されず、式全体が空になります（短絡評価）。`chain()` が値を返したときだけ後続アクセスを評価し、結果を `fromValue` で包み直します（`fromValue` / `empty` は**factory なので JSX `<O.… />` で生成**し、構築点が見えます）。だから `a?.b.c` は「`a` が空なら全体が空、値があれば `b.c` を辿る」＝末尾の `.c` まで含めて短絡します（`(a?.b).c` ではない）。
+
+```plew
+val name = user?.profile.name    // user が空なら name は空。値があれば .profile.name を辿る
+val n    = a?.b.c.doubled()      // a が空なら空。値があれば b.c.doubled() まで評価
+```
+
+次の `?.` は新しいチェーンを開始します（`a?.b?.c` は各 `?.` が独立に短絡）。中間フィールド自身が Optional のとき（`a?.b?.c` で `b: Optional[…]`）は各段に `?.` を付けます。なお `?.` は**ネストした Optional を平坦化しません**（`v.member` が `Optional[T]` を返せば結果は `Optional[Optional[T]]`）── 平坦化は隠れた意味変換なので採らず、明示に `?.` を重ねます。
 
 ```plew
 val name = user?.profile?.name
