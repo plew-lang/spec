@@ -209,9 +209,9 @@ struct Celsius {
 }
 
 impl Celsius {
-    // 名前付き factory → <Celsius.fromFahrenheit … />
-    factory fromFahrenheit(fahrenheit: F64) {
-        return <Celsius degree=((fahrenheit - 32.0) / 1.8) />
+    // 名前付き factory → <Celsius.fahrenheit … />
+    factory fahrenheit(value: F64) {
+        return <Celsius degree=((value - 32.0) / 1.8) />
     }
 
     // 引数なしでも名前を付ければ何個でも定義できる
@@ -221,7 +221,7 @@ impl Celsius {
 }
 
 val a = <Celsius degree=20.0 />                      // フィールド指定
-val b = <Celsius.fromFahrenheit fahrenheit=68.0 />  // 名前付き factory
+val b = <Celsius.fahrenheit value=68.0 />           // 名前付き factory
 val z = <Celsius.zero />                             // 引数なし factory
 ```
 
@@ -270,16 +270,16 @@ impl Temperature {
     }
 
     // Result[Self, E]：物理的にあり得ない値はエラー
-    result[RangeError] factory fromKelvin(k: F64) {
-        guard k >= 0.0 { return <Result.Err error=<RangeError /> /> }
-        return <Result.Ok value=<Temperature celsius=(k - 273.15) /> />
+    result[RangeError] factory kelvin(value: F64) {
+        guard value >= 0.0 { return <Result.Err error=<RangeError /> /> }
+        return <Result.Ok value=<Temperature celsius=(value - 273.15) /> />
     }
 }
 
 val z = <Temperature.zero />                       // Temperature
 val a = <Temperature.parse text="20.0" />          // Optional[Temperature]
-val b = <Temperature.fromKelvin k=300.0 />        // Result[Temperature, RangeError]
-val c = try <Temperature.fromKelvin k=300.0 />    // try と合成（前置 try が JSX 全体に掛かる）
+val b = <Temperature.kelvin value=300.0 />        // Result[Temperature, RangeError]
+val c = try <Temperature.kelvin value=300.0 />    // try と合成（前置 try が JSX 全体に掛かる）
 ```
 
 - **自動ラップはしない**（明示 > 暗黙）。本体は `Optional.Some`/`None`・`Result.Ok`/`Err` を **JSX で明示的に返す**。成功路の内側 `Self` も `<Type … />` で組むので、**構築点が二段とも可視**になる（JSX の目的どおり）。

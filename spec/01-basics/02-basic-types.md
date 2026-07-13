@@ -94,7 +94,7 @@ struct String {
 
 - **`buffer` は private**：プログラマは内部バッファに触れず、UTF-8 安全な操作だけを使う。表現を隠すのは ① UTF-8 妥当性の不変条件を `String` の操作だけで守るため、② `String` を `Array[U8]` の皮にせず、文字列専用の表現変更を後方互換で可能にするため、③ **将来「短い文字列をヒープに載せずインライン化する（small-string 最適化）」を後方互換のまま入れられる**ようにするため（その段で `String` の表現は `enum { Large(Buffer[U8]) | Small(…) }` のような判別形へ変わり得るが、`buffer` を公開していなければ利用側コードは無傷）。
 - バイト列は **メソッド `bytes() -> Array[U8]`** で得る（`s.bytes()`）。`buffer` は private なので公開フィールドではなく**メソッド**（Plew に computed property は無く、computed 値はメソッド・stored だけ `pub(get)` フィールド）。可変な配列が欲しければ `mut val b = s.bytes()`（値意味論＝CoW で、変更するときにだけ複製される＝`String` 自体は不変のまま）。現行の大文字列表現では O(1)（`String` の `Buffer[U8]` と返す `Array[U8]` が同じ backing を CoW 共有するだけ・`s.bytes().count()` も O(1)）。〔small-string 最適化を入れた段では、短い文字列の `bytes()` は inline バイトから `Array` を作るため確保を伴い得る。〕
-- **任意バイトからの公開生成は持たない**（不変条件を破るため）。生成は文字列リテラルと、検証する失敗し得る factory（例 `String.fromBytes(bytes:) -> Result[String, Utf8Error]`、名称暫定）に限る。
+- **任意バイトからの公開生成は持たない**（不変条件を破るため）。生成は文字列リテラルと、UTF-8 を検証する失敗し得る factory `<String.checked source=bytes /> -> Result[String, Utf8Error]` に限る。
 - **入力を正規化しない**：来たバイトをそのまま保持する（下記の等価と整合）。
 
 ### 等価
