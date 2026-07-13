@@ -44,7 +44,7 @@ val z = 42             // エラー：文脈が無い → val z: I32 = 42 か va
 
 **文脈の参照範囲は局所（前方・双方向）**です ── 注釈・引数型・戻り型・直接の被演算子型から型が**その場で**一意に決まることを要求し、関数本体全体を見渡す大域型推論（単一化／Hindley–Milner）で「後の使用から逆算」はしません。後者はアドホックなオーバーロードと衝突して曖昧化・コンパイル時間の爆発を招く（Swift の `ExpressibleByIntegerLiteral` × オーバーロードと同型の問題）ため、最小コンパイラ・予測可能性を優先して採りません。
 
-**許容する帰結（明記）**：既定型もフォールバックも無いため、文脈の無い素のリテラルは**型サフィックスが必要**になります。`for val i in 0..<10 { … }`（`10`・`i` とも文脈なし）や `val x = 1 + 1` は `0..<10U64`／`1I32 + 1` のように明示が要ります。一方 `0..<arr.count`（`count` が `U64` 確定）や注釈・引数型がある場面では不要です。**暗黙数値変換が無く配列添字／`count` が `U64` 固定**なので、「ひとつの既定型」では添字（`U64` が欲しい）と一般算術（`I32` が欲しい）の双方を満たせない ── これが既定型を安易に置けない理由でもあります。**この煩雑さは意図した帰結**で、必要なら後から**非破壊（additive）に**緩められます：(a) 文脈ゼロ時に限った既定型フォールバックの導入、(b) 推論到達範囲の局所→大域への拡張。どちらも「今エラーになる箇所が通るようになる」だけで既存コードの意味を変えないため、初手は厳しい側（明示要求）から始めます。
+**許容する帰結（明記）**：既定型もフォールバックも無いため、文脈の無い素のリテラルは**型サフィックスが必要**になります。`for val i in 0..<10 { … }`（`10`・`i` とも文脈なし）や `val x = 1 + 1` は `0..<10U64`／`1I32 + 1` のように明示が要ります。一方 `0..<arr.count()`（`count()` が `U64` 確定）や注釈・引数型がある場面では不要です。**暗黙数値変換が無く配列添字／`count()` が `U64` 固定**なので、「ひとつの既定型」では添字（`U64` が欲しい）と一般算術（`I32` が欲しい）の双方を満たせない ── これが既定型を安易に置けない理由でもあります。**この煩雑さは意図した帰結**で、必要なら後から**非破壊（additive）に**緩められます：(a) 文脈ゼロ時に限った既定型フォールバックの導入、(b) 推論到達範囲の局所→大域への拡張。どちらも「今エラーになる箇所が通るようになる」だけで既存コードの意味を変えないため、初手は厳しい側（明示要求）から始めます。
 
 **フォールバック既定を入れるなら符号付き（`I32`/`I64`）のみ・`U64` は不可**：一般の数は負になり得るので符号付き既定は型に嘘をつかない。一方 `U64` を既定にすると、頼んでもいない非負性を一般の値に押し付け、`val a = 5 - 10` のような無害な式を**実行時 panic** に変えてしまう（型の嘘）。同じ理由で「添字が `U64` だから既定も `U64`」とは**しない**：添字 `U64` は「ここは非負」というプログラマの意図の明示であって、一般リテラルの既定とは別物。符号付き値を添字に渡す際の負の混入は、`as` でなく可謬の [`TryFrom`](../03-expressions/12-operators.md#失敗し得る変換tryfrom-トレイト)（縮小・可謬変換）を要するので、**負は「添字した地点」ではなく「非負の場所へ入れようとした変換地点」で loud に顕在化**する。
 
@@ -93,7 +93,7 @@ struct String {
 ```
 
 - **`buffer` は private**：プログラマは内部バッファに触れず、UTF-8 安全な操作だけを使う。表現を隠すのは ① UTF-8 妥当性の不変条件を `String` の操作だけで守るため、② `String` を `Array[U8]` の皮にせず、文字列専用の表現変更を後方互換で可能にするため、③ **将来「短い文字列をヒープに載せずインライン化する（small-string 最適化）」を後方互換のまま入れられる**ようにするため（その段で `String` の表現は `enum { Large(Buffer[U8]) | Small(…) }` のような判別形へ変わり得るが、`buffer` を公開していなければ利用側コードは無傷）。
-- バイト列は **メソッド `bytes() -> Array[U8]`** で得る（`s.bytes()`）。`buffer` は private なので公開フィールドではなく**メソッド**（Plew に computed property は無く、computed 値はメソッド・stored だけ `pub(get)` フィールド）。可変な配列が欲しければ `mut val b = s.bytes()`（値意味論＝CoW で、変更するときにだけ複製される＝`String` 自体は不変のまま）。現行の大文字列表現では O(1)（`String` の `Buffer[U8]` と返す `Array[U8]` が同じ backing を CoW 共有するだけ・`s.bytes().count` も O(1)）。〔small-string 最適化を入れた段では、短い文字列の `bytes()` は inline バイトから `Array` を作るため確保を伴い得る。〕
+- バイト列は **メソッド `bytes() -> Array[U8]`** で得る（`s.bytes()`）。`buffer` は private なので公開フィールドではなく**メソッド**（Plew に computed property は無く、computed 値はメソッド・stored だけ `pub(get)` フィールド）。可変な配列が欲しければ `mut val b = s.bytes()`（値意味論＝CoW で、変更するときにだけ複製される＝`String` 自体は不変のまま）。現行の大文字列表現では O(1)（`String` の `Buffer[U8]` と返す `Array[U8]` が同じ backing を CoW 共有するだけ・`s.bytes().count()` も O(1)）。〔small-string 最適化を入れた段では、短い文字列の `bytes()` は inline バイトから `Array` を作るため確保を伴い得る。〕
 - **任意バイトからの公開生成は持たない**（不変条件を破るため）。生成は文字列リテラルと、検証する失敗し得る factory（例 `String.fromBytes(bytes:) -> Result[String, Utf8Error]`、名称暫定）に限る。
 - **入力を正規化しない**：来たバイトをそのまま保持する（下記の等価と整合）。
 
@@ -105,11 +105,11 @@ struct String {
 
 「1 文字」を一つに固定せず、**ビューを明示選択**します。型がコストを語ります：
 
-- `bytes()`（`Array[U8]`）— ランダムアクセス可・`count` は O(1)。
+- `bytes()`（`Array[U8]`）— ランダムアクセス可・`count()` は O(1)。
 - `scalars()` — Unicode スカラのイテレータ（`count()` は O(n)）。
 - `graphemes()` — 書記素クラスタ（人間が 1 文字と感じる単位。結合文字・絵文字列を割らない）のイテレータ（`count()` は O(n)）。
 
-ランダムアクセスできるのは `bytes()` だけで、復号を要する `scalars`/`graphemes` はイテレータ。**String への整数添字 `s[i]` は持たない**（可変長 UTF-8 で O(1) 添字は嘘になる。生バイトは `s.bytes()[i]`）。長さ専用メソッド（`*_count()`）も設けません（配列の `count`＝O(1)、イテレータの `count()`＝O(n) で自明だから）。
+ランダムアクセスできるのは `bytes()` だけで、復号を要する `scalars`/`graphemes` はイテレータ。**String への整数添字 `s[i]` は持たない**（可変長 UTF-8 で O(1) 添字は嘘になる。生バイトは `s.bytes()[i]`）。長さ専用メソッド（`*_count()`）も設けません（配列の `count()`＝O(1)、イテレータの `count()`＝O(n) で自明だから）。
 
 ### 連結（`+`）
 
@@ -155,7 +155,7 @@ trait Format {
 
 ### Buffer
 
-`Buffer[T]` は copyable `T` のための、動的・伸長可能・連続な **CoW 値型の格納床**です。`Array`、`Dictionary`、`Set`、`String` が内部で用いますが、ユーザーも `@Std/Core` から import して自作コレクションを実装できます。生スロット・pointer・borrow・未初期化領域・手書き retain/release は公開しません。添字と `count` は `Array` と同じく `U64` です。
+`Buffer[T]` は copyable `T` のための、動的・伸長可能・連続な **CoW 値型の格納床**です。`Array`、`Dictionary`、`Set`、`String` が内部で用いますが、ユーザーも `@Std/Core` から import して自作コレクションを実装できます。生スロット・pointer・borrow・未初期化領域・手書き retain/release は公開しません。添字と `count()` は `Array` と同じく `U64` です。
 
 ```plew
 import @Std/Core with { Buffer }
@@ -169,27 +169,27 @@ val first = buffer[0U64]
 
 | API | 契約 |
 |---|---|
-| `factory new()` | 空の Buffer を作る。`count == 0` かつ `capacity == 0`。物理確保を行うかは未規定。 |
-| `factory withCapacity(capacity: U64)` | 空の Buffer を作る。成功時は `count == 0` かつ返値の `capacity` は要求値以上。 |
-| `count: U64` | 生きた要素数。常に `[0, count)` だけが読める。 |
-| `capacity: U64` | 現在の要素スロット数。常に `count <= capacity`。 |
-| `isEmpty: Bool` | `count == 0` と同値。 |
-| `inout fn reserve(additionalCapacity: U64)` | 成功時は `capacity >= count + additionalCapacity`。縮小しない。 |
+| `factory new()` | 空の Buffer を作る。`count() == 0` かつ `capacity() == 0`。物理確保を行うかは未規定。 |
+| `factory withCapacity(capacity: U64)` | 空の Buffer を作る。成功時は `count() == 0` かつ返値の `capacity()` は要求値以上。 |
+| `fn count() -> U64` | 生きた要素数。常に `[0, count())` だけが読める。 |
+| `fn capacity() -> U64` | 現在の要素スロット数。常に `count() <= capacity()`。 |
+| `fn isEmpty() -> Bool` | `count() == 0` と同値。 |
+| `inout fn reserve(additionalCapacity: U64)` | 成功時は `capacity() >= count() + additionalCapacity`。縮小しない。 |
 
-`withCapacity` / `reserve` の要求値は下限です。growth factor・丸め・余分な容量・再配置の有無は未規定で、CoW 共有中の変異では容量が足りていても privatize が必要になり得ます。`capacity` が十分でも allocator 呼び出し・privatize・再配置をしないことは保証しません。利用者が依存できるのは、成功後の論理的な容量関係だけです。
+`withCapacity` / `reserve` の要求値は下限です。growth factor・丸め・余分な容量・再配置の有無は未規定で、CoW 共有中の変異では容量が足りていても privatize が必要になり得ます。`capacity()` が十分でも allocator 呼び出し・privatize・再配置をしないことは保証しません。利用者が依存できるのは、成功後の論理的な容量関係だけです。
 
-要求要素数・`count + additionalCapacity`・要素サイズとの乗算・allocator の表現可能範囲のいずれかが上限を超える場合、または確保に失敗した場合、`withCapacity` / `reserve` および容量拡張を伴う mutator は panic します。`tryReserve` と公開 `maxCapacity` は v1 に設けません。panic 時は receiver を変更しません。派生算術はすべて checked に行い、オーバーフローをラップさせません。
+要求要素数・`count() + additionalCapacity`・要素サイズとの乗算・allocator の表現可能範囲のいずれかが上限を超える場合、または確保に失敗した場合、`withCapacity` / `reserve` および容量拡張を伴う mutator は panic します。`tryReserve` と公開 `maxCapacity` は v1 に設けません。panic 時は receiver を変更しません。派生算術はすべて checked に行い、オーバーフローをラップさせません。
 
 #### 読み・書き・追加
 
 | API | 成功時の意味 | panic |
 |---|---|---|
-| `fn get(index: U64) -> T` | `index` の値コピーを返す。Buffer はその要素を保持し続ける。 | `index >= count` |
-| `buffer[index] -> T` | `get(index:)` と同じ値返し。 | `index >= count` |
-| `inout fn set(index: U64, value~: T)` | `value` のコピーで slot を置換する。 | `index >= count` |
-| `buffer[index] = value` | `set(index:value:)` と同じ。 | `index >= count` |
-| `inout fn append(value~: T)` | 末尾に `value` のコピーを追加し、`count` を 1 増やす。 | 必要容量を確保できない場合 |
-| `inout fn insertAt(index: U64, value~: T)` | `index` 以降を右へずらし、そこへ `value` のコピーを挿入する。順序を保ち、`index == count` は append と同じ。 | `index > count`、または必要容量を確保できない場合 |
+| `fn get(index: U64) -> T` | `index` の値コピーを返す。Buffer はその要素を保持し続ける。 | `index >= count()` |
+| `buffer[index] -> T` | `get(index:)` と同じ値返し。 | `index >= count()` |
+| `inout fn set(index: U64, value~: T)` | `value` のコピーで slot を置換する。 | `index >= count()` |
+| `buffer[index] = value` | `set(index:value:)` と同じ。 | `index >= count()` |
+| `inout fn append(value~: T)` | 末尾に `value` のコピーを追加し、`count()` を 1 増やす。 | 必要容量を確保できない場合 |
+| `inout fn insertAt(index: U64, value~: T)` | `index` 以降を右へずらし、そこへ `value` のコピーを挿入する。順序を保ち、`index == count()` は append と同じ。 | `index > count()`、または必要容量を確保できない場合 |
 
 `get` / `[]` は Optional を返しません。範囲外は panic とし、読みは常に値返しです。grow / realloc を跨ぐ borrow は提供しません。
 
@@ -199,10 +199,10 @@ val first = buffer[0U64]
 |---|---|---|
 | `inout fn pop() -> Optional[T]` | 空なら `Optional.None` | 末尾要素を削除し `Optional.Some` で返す。 |
 | `inout fn removeLast() -> T` | 空なら panic | 末尾要素を削除して返す。 |
-| `inout fn removeAt(index: U64) -> T` | `index >= count` なら panic | `index` の要素を削除して返す。後続要素を左へずらし、順序を保つ。 |
-| `inout fn swapRemove(index: U64) -> T` | `index >= count` なら panic | `index` の要素を削除して返す。末尾要素があればその slot へ移す。順序は保持しない。 |
+| `inout fn removeAt(index: U64) -> T` | `index >= count()` なら panic | `index` の要素を削除して返す。後続要素を左へずらし、順序を保つ。 |
+| `inout fn swapRemove(index: U64) -> T` | `index >= count()` なら panic | `index` の要素を削除して返す。末尾要素があればその slot へ移す。順序は保持しない。 |
 | `inout fn clear()` | 常に成功 | 全要素を削除する。操作後の capacity は未規定。 |
-| `inout fn truncate(count: U64)` | 常に成功 | `count < self.count` なら suffix `[count, self.count)` を削除する。`count >= self.count` なら no-op。操作後の capacity は未規定。 |
+| `inout fn truncate(count: U64)` | 常に成功 | `count < self.count()` なら suffix `[count, self.count())` を削除する。`count >= self.count()` なら no-op。操作後の capacity は未規定。 |
 
 返された `T` は呼び出し側が所有する独立した値であり、Buffer は削除後にその要素を保持しません。すべての mutator は、panic し得る前処理を済ませて操作後の有効状態を commit してから退役要素・旧 backing を release / drop します。最後の `Ref` release が `deinit` を起動して再入しても、再入側が観測する Buffer は操作後の有効状態です。
 
@@ -216,7 +216,7 @@ val first = buffer[0U64]
 `Array[T]` は**動的・伸長可能・連続**な **CoW 値型**のコレクション（`Vec<T>` / `List<T>` 相当）。コピーすると内部バッファを共有し、変更時にだけ複製します。要素は連続配置され、プリミティブは**ボックス化せずインライン格納**します（Java `int[]`・C# 配列モデル。`Array[U8]` や WASM ゼロコピーの前提）。**`unique` 要素は直接持てません**（generics はコピー可能な型に限定）ので [`Ref`](03-values.md#ref--weakref共有可変) 包み（`Array[Ref[T]]`）にします（→ [ジェネリクス](../02-type-system/06-generics.md#型引数の能力マーカーallowunique--nolocal)）。
 
 - **唯一の配列型**。長さが型に乗る固定長配列 `[E; N]`（const generics）は持たない＝長さは常に実行時。型レベルの長さ安全が要る局所は名前付きフィールドの struct か実行時不変条件で代替する（需要が固まれば const generics は後付けで非破壊に足せる）。
-- **添字 `arr[i]` は `Index[U64] -> T`**（要素の値を返す。→ [型変換と演算子](../03-expressions/12-operators.md)）。**`count`・添字・`0..<arr.count` のレンジ要素はすべて `U64`** に揃えます（暗黙変換が無いので同型でないとキャストが要る ── 揃えることで `for val i in 0..<arr.count { arr[i] }` がキャストレス）。`count` は O(1)。符号なしゆえ**負添字は表現できず**、範囲外は panic（添字の意味を型で変えない＝[辞書](#辞書)と同じ）。幅は**固定 `U64`**（ポインタ幅の `USize` は採らない）＝**全ターゲットで同一意味論**にし、`I32` の 2³¹ 上限も回避するためです。
+- **添字 `arr[i]` は `Index[U64] -> T`**（要素の値を返す。→ [型変換と演算子](../03-expressions/12-operators.md)）。**`count()`・添字・`0..<arr.count()` のレンジ要素はすべて `U64`** に揃えます（暗黙変換が無いので同型でないとキャストが要る ── 揃えることで `for val i in 0..<arr.count() { arr[i] }` がキャストレス）。`count()` は O(1)。符号なしゆえ**負添字は表現できず**、範囲外は panic（添字の意味を型で変えない＝[辞書](#辞書)と同じ）。幅は**固定 `U64`**（ポインタ幅の `USize` は採らない）＝**全ターゲットで同一意味論**にし、`I32` の 2³¹ 上限も回避するためです。
 - **部分ビュー（スライス）は当面持たない**。部分配列はコピーで作る。ゼロコピーのビュー型（`Slice[T]` / Span 相当）と、それを使った FFI ゼロコピーは、必要になった時点で additive に追加する（FFI 型マッピングは [モジュール](../04-execution/15-modules.md) で未策定）。
 
 ### 辞書
@@ -281,5 +281,5 @@ trait Step: Ord {
 ```
 
 - 要求はすべて **`assoc fn`**（対称・値を産む操作ゆえ・→ [演算子](../03-expressions/12-operators.md#演算子システム) の規約）。レンジ iterator は `T.stepForward(start: current, count: 1)` で前進し、**`None` を返したら終端**（`0..=U64.MAX` の MAX 到達も溢れなく扱える＝この `None` は正常な終端で、算術オーバーフロー panic とは別物）。`ClosedRange` の最大値停止はイテレータ側の状態で、構造体は素の `{ start, end }` のまま。
-- **歩数は `U64`**（添字・`count` と同じ・Rust の `usize` 相当）。距離が `U64` を超え得る型（将来の `U128`・ユーザ定義の広い離散型）でも、`stepsBetween` が `(飽和下界, None)` を返せるので実装可能 ── Array の容量も `U64` 上限なので、正確カウントを `U64` で頭打ちにするのは正しいキャップ。`stepForward` の `count: U64` は「一度に最大 `U64.MAX` 歩」で、`.stepBy(k)` も `U64`。
+- **歩数は `U64`**（添字・`count()` と同じ・Rust の `usize` 相当）。距離が `U64` を超え得る型（将来の `U128`・ユーザ定義の広い離散型）でも、`stepsBetween` が `(飽和下界, None)` を返せるので実装可能 ── Array の容量も `U64` 上限なので、正確カウントを `U64` で頭打ちにするのは正しいキャップ。`stepForward` の `count: U64` は「一度に最大 `U64.MAX` 歩」で、`.stepBy(k)` も `U64`。
 - `stepBackward` は逆順反復（`.reversed()`・additive）で使い、v1 の前進反復では未使用。`stepsBetween` は `count()`/sizeHint の O(1) 化に使う。

@@ -33,9 +33,9 @@ async fn main() {
 
 ### unique 結果と `allowUnique`（v1 は不可・将来）
 
-v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべてコピー可能な型に限定**（`allowUnique` 未導入）。帰結：
+v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべてコピー可能な型に限定**（`allowUnique` 未導入）。これは `unique` の制約であって、`local` の制約とは別です。帰結：
 
-- async/spawn は **unique 結果を返せない**（`-> Promise[unique]` 不可）。返すのはコピー可能な値か `Ref`。async で unique を持ち回るなら **`Ref` 包み**（`Ref` は async を越えられる）。
+- async/spawn は **unique 結果を返せない**（`-> Promise[unique]` / `-> JoinHandle[unique]` 不可）。async で unique を持ち回るなら **`Ref` 包み**（`Ref` は async を越えられる）。
 - **unique を generic に入れるのは常に `Ref` 包み**（`Optional[Ref[File]]`・`Array[Ref[File]]`）。`Ref` はコピー可能なので通常のコピー可能なコレクションになり、`match`/peek/反復が普通に効く（move-out 専用 API も `take()` も不要）。
 - by-value の unique を generic で扱う（`Optional[unique]`・`Promise[unique]`・`Array[unique]`）には **借用束縛＝ライフタイム**が要り（要素を取り出さず借用で覗く操作のため）、v1 の非 escape 借用では実装できない。**`allowUnique` は将来の additive**（保持系＝Optional/Promise が先・Array/Iterable は escaping borrow 導入後）。それまでは `Ref` 包みで代替。
 

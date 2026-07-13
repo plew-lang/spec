@@ -37,7 +37,7 @@ export enum Color[T] where T: Format {
 
 **列挙型ディレクティブ**: 詳細は今後決定予定（[メタプログラミング](../04-execution/16-metaprogramming.md) 参照）
 
-**`unique enum`**：struct と同様、`unique` を前置した enum は[コピー不可・move 専用](../01-basics/03-values.md#uniqueコピー不可型)（Swift の noncopyable enum と同型）。unique（または unique を推移的に含む型）をペイロードに持つ enum は `unique enum` 明示必須（伝染規則は struct のフィールドと同一）。
+**`unique enum`**：struct と同様、`unique` を前置した enum は[コピー不可・move 専用](../01-basics/03-values.md#uniqueコピー不可型)（Swift の noncopyable enum と同型）。unique（または unique を推移的に含む型）をペイロードに持つ enum は `unique enum` 明示必須（伝染規則は struct のフィールドと同一）。ただし v1 では enum 型自身の明示 `deinit` 本体は持てません。enum の破棄時は active payload が通常通り破棄されます。
 
 ## フィールドの統一原則
 
@@ -84,6 +84,8 @@ match maybeValue {
 ```
 
 オプショナルチェーン（`?.`）は `Chain` トレイトの実装によって有効になります。nil 合体演算子（`??`）は持たず、フォールバックは `Optional.unwrapOr(fallback:)` メソッド（eager 値／lazy クロージャのオーバーロード）で書きます（[型変換と演算子](../03-expressions/12-operators.md) 参照）。
+
+v1 の `Optional[T]` は通常の generic enum なので、`T` はコピー可能型に限ります。`Optional[File]` のように by-value の `unique` 型を直接入れることはできません。`Ref[File]` で包めば `Optional[Ref[File]]` は書けますが、これは共有 identity / 共有可変を導入する別の意味であり、「optional な唯一所有資源」ではありません。by-value の `Optional[unique]` は [`allowUnique`](06-generics.md) で generic container の move-only payload を明示的に許す設計を入れた後の将来機能です。v1 で禁じる理由は、通常 generic enum に move-only payload を入れると、copy / drop / match move / partial initialization の規則が型引数の能力に依存し、すべての generic container が所有権 IR を要求するためです。
 
 > トレイトもカスタム型の一種ですが、要求・関連型・継承・準拠と `via` の意味論は独立章の[トレイト](08-traits.md)にまとめています。
 
