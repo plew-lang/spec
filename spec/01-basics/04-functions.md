@@ -14,6 +14,15 @@ export async fn functionName[T, U](
 
 引数のモード（`borrow`／`inout`／`move`・コピー可能は既定で by-value）、`async fn`／`spawn fn`、型引数の能力マーカー（`allowUnique`／`noLocal`）は [値・変数・所有権](03-values.md)・[非同期処理とメモリ管理](../04-execution/14-concurrency.md)・[ジェネリクス](../02-type-system/06-generics.md) を参照。
 
+名前付きの `fn` 宣言は**呼び出せる宣言**であって、第一級の関数値ではありません。裸の関数名を値として読めず、関数値が必要なら[無名関数（クロージャ）](#無名関数クロージャ)で明示的に包みます。
+
+```plew
+fn double(value: I32) -> I32 { return value * 2 }
+
+val f = double                                      // エラー: 名前付き関数は値ではない
+val g = fn(value: I32) -> I32 { return double(value: value) }  // OK
+```
+
 ## 戻り値（`return` は明示）
 
 関数は**末尾式を暗黙に返しません**（Rust と異なる）。値を返すには `return` を書きます。`give` は[ブロック式](../03-expressions/11-control-flow.md)（`if`／`match` のアームや `val x = { … give v }`）専用で、関数本体の戻り値にはなりません。
@@ -123,6 +132,14 @@ greet(name: "Alice", loud: true)       // greeting="Hello"（途中だけ省略�
 
 これらの派生セレクタは通常のオーバーロード集合に加わり、既存の解決規則（同一セレクタは具体位置の型で区別 → [メソッドと impl](../02-type-system/07-methods-impl.md)）に従います。**別途宣言した関数のセレクタと衝突して型で区別できなければコンパイルエラー**です（例：上の `f` に加えて同じ型の `fn f(b: I32)` を宣言すると `f(b:)` が二重）。「一意に定まらなければエラー」という Plew の方針どおりです。
 
+派生セレクタは**呼び出し面の名前**であって、第一級の関数値ではありません。`val g = f(b:)` のような selector の値化は v1 では持ちません。省略済み default を持つ関数値が必要なら、クロージャで明示的に包み、そのクロージャが呼ばれるたびに default 式を評価します。
+
+```plew
+fn f(a: I32 = next(), b: I32) -> I32 { ... }
+
+val g = fn(b: I32) -> I32 { return f(b: b) }  // 呼び出しごとに next() を評価
+```
+
 ## 無名関数（クロージャ）
 
 名前を持たない関数リテラルを `fn` で記述します。第一級の値として、変数への代入・引数渡し・戻り値にできます。キャプチャや escape の意味論は **Swift のクロージャと同じ**です。
@@ -153,11 +170,11 @@ val printer: fn(String, terminator: String) -> () = …   // 第 1 引数は無�
 ラベルは関数型の**同一性の一部**です。**ラベル違いの関数型の間にサブタイプ関係も暗黙変換もありません** ── 引数型・戻り値型が同じでもラベルが違えば**別の型**で、代入・受け渡しは型エラーになります。
 
 ```plew
-fn double(value: I32) -> I32 { return value * 2 }   // 型: fn(value: I32) -> I32
+val doubleValue = fn(value: I32) -> I32 { return value * 2 }   // 型: fn(value: I32) -> I32
 
 fn mapEach(self: Array[I32], transform: fn(element: I32) -> I32) -> Array[I32] { … }
 
-numbers.mapEach(transform: double)   // ❌ 型エラー: fn(value:) は fn(element:) ではない
+numbers.mapEach(transform: doubleValue)   // ❌ 型エラー: fn(value:) は fn(element:) ではない
 ```
 
 これは Swift が初期に持ち（[SE-0111](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0111-remove-arg-label-type-significance.md) で撤廃した）「ラベル付き関数型の暗黙変換」を**意図的に持たない**設計です。Swift の混乱の主因は (a) ラベルによる並べ替えと (b) ラベル違いの暗黙サブタイプ変換でしたが、Plew は**引数順を固定**し**暗黙変換を持たない**ので、ラベルを型に残したまま健全でいられます。
