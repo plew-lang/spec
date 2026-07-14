@@ -83,7 +83,7 @@ unique enum Handle {
 ```
 
 
-> **用語**：本書は `unique` を基準に書き、**「`unique` でない」＝コピー可能**（他言語でいう *Copyable*）と表します。*Copyable* はキーワードではありません。同様に [`local`](#localspawn-を越えられない型) の否定が「spawn を越えられる」（他言語の *Sendable*）です。
+> **用語**：本書は `unique` を基準に書き、**「`unique` でない」＝コピー可能**（他言語でいう *Copyable*）と表します。*Copyable* はキーワードではありません。スレッド境界を安全に越えられる性質は [`sendable`](#sendable--nonsendableスレッド間の移送可能性)、越えられない性質は `nonsendable` と表します。
 
 - **束縛は move のみ**：`val f2 = move f`（以後 `f` は使えない）。`val f2 = f`（コピー）は**エラー**です。
 - **アクセスはモード明示必須**：コピー可能と違い bare 不可。`borrow`/`inout`/`move` のいずれかを書く。
@@ -112,17 +112,32 @@ impl File {
 - **同じ drop edge 上の named locals は宣言の逆順**（C++/Rust/Swift と同じスタック規律）：後の束縛は先行する束縛を参照して構築でき（`val b = f(a)`）、依存される側が後に消えるのが安全な向き。通常のスコープ離脱では、そのスコープ内でまだ所有されている locals がこの順に破棄される。フィールドの「宣言順」と非対称なのは意図的 ── フィールドには構築依存が存在しない（前項）が、locals にはあるため。
 - **`return` では文の一時値が frame の locals より先に破棄される**：一時値は最も内側の寿命（生成の逆順規律の帰結＝最後に生まれたものが最初に消える）。順序は「return 値の計算・move → その文の一時値 → named locals（宣言の逆順）」。
 
-## local（spawn を越えられない型）
+## sendable / nonsendable（スレッド間の移送可能性）
 
-[`Ref`](#ref--weakref共有可変)（や他の `local` 型）をフィールドに持つ型は **`local struct`** を明示します（`unique` と同型のエラー強制）。
+`sendable` は、値を別スレッドへ安全にコピーまたは move できる性質です。`nonsendable` はその否定で、[`Ref`](#ref--weakref共有可変) のようにスレッド境界を越えられない根本型を宣言します。ユーザー定義型も、フィールドだけからは分からないスレッド束縛を表すために明示できます。
 
 ```plew
-local struct Session {
-    val conn: Ref[Connection]
+nonsendable struct Ref[T] { /* 組み込み表現 */ }
+
+nonsendable struct UiContext {
+    val rawHandle: U64
 }
 ```
 
-`local` 型はスレッド境界（`spawn`）を越えられません（共有可変＋非 atomic な参照カウントのため）。単一スレッド（`async` を含む）では通常の型と全く同じに扱えます。境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
+`nonsendable` は**構造的に自動伝播**します。`nonsendable` なフィールドを直接または推移的に含む struct、nonsendable な payload を持つ enum は、外側に `nonsendable` と書かなくても nonsendable です。
+
+```plew
+struct Session {
+    val conn: Ref[Connection]
+}
+// Session は Ref[Connection] を含むため自動的に nonsendable
+```
+
+これは [`unique`](#uniqueコピー不可型) と意図的に非対称です。`unique` はコピー可否と呼び出し規則を日常的に変える肯定的な所有権モードなので、unique フィールドを持つ外側にも `unique` の明示を要求します。一方、nonsendable の伝播は spawn 可能性を狭めるだけで、通常の単一スレッドコードの意味を変えません。日常コードへ不要な宣言を広げないため、外側の明示は要求しません。
+
+通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。generic 型の sendability は型引数ごとに決まり、例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。明示的な `nonsendable struct` は、フィールドがすべて sendable でも sendability の導出を禁止します。
+
+nonsendable 値はスレッド境界（`spawn`）を越えられません。単一スレッド（`async` を含む）では sendable 値と全く同じに扱えます。関数値の明示的な sendability は [無名関数（クロージャ）](04-functions.md#sendable-クロージャ)を、境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
 
 ## Ref / WeakRef（共有可変）
 
@@ -148,7 +163,7 @@ match w.upgrade() {               // Optional[Ref[T]]
 }
 ```
 
-- **再帰的な値型に `Ref` は要りません**：自己参照する `struct`/`enum`（木・連結リスト・AST 等）はコンパイラが自動でヒープ間接を挟みレイアウトを有限化します（値意味論のまま・`local` にならず spawn 可）。`Ref` を書くのは**共有可変グラフ**（コピーで共有・循環あり）を意図したときだけです。詳細は [構造体と列挙型 § 再帰的な値型](../02-type-system/05-structs-enums.md#再帰的な値型)。
+- **再帰的な値型に `Ref` は要りません**：自己参照する `struct`/`enum`（木・連結リスト・AST 等）はコンパイラが自動でヒープ間接を挟みレイアウトを有限化します（値意味論のまま sendable）。`Ref` を書くのは**共有可変グラフ**（コピーで共有・循環あり）を意図したときだけです。詳細は [構造体と列挙型 § 再帰的な値型](../02-type-system/05-structs-enums.md#再帰的な値型)。
 
   `w->x` を「直接 `Optional` を返す deref」にしないのは、(1) **生存を固定**するため（一度 `upgrade` すれば強参照が指す先を生かし続ける。`w->x`/`w->y` を個別に可謬にすると間に最後の強参照が落ちて途中で死に得る）、(2) **書き込みが綺麗**（`r->x = v` は生存保証された強参照に書く。死んだ先への静かな no-op を避ける）、(3) **`->` の意味を一定に保つ**（常に「生存保証された `Ref` の deref」）ため。Rust の `Weak::upgrade()` と同じ。
 
@@ -168,7 +183,7 @@ val raw = parse(data: raw)          // ParsedData（同名で変換・型が変�
 - **代入 `x = e` とは別物**：代入は既存の `mut val` 束縛を同じ型で書き換える。再宣言 `val x = e` は新しい束縛を作る（`mut` 不要・型変更可）。
 - **RHS は旧束縛が見える環境で評価**します。`val raw = parse(data: raw)` の RHS の `raw` は旧束縛を指します。RHS 評価とその一時値の破棄が終わってから、新束縛を commit します。
 - **覆われた `unique` 束縛は shadowing の commit 時に破棄**されます。再宣言により旧束縛は所有者として名指せなくなるため、その点が accessibility cliff です。旧 `unique` を借用した値が shadowing を越えて使われる場合はコンパイルエラーです。借用があるから旧値の drop を遅らせるのではなく、借用を旧値の寿命内に収めます。
-- **覆われたコピー可能束縛の寿命は変わらない**：コピー可能な旧束縛は通常の local と同じくスコープ離脱まで生存し、破棄はスコープ離脱時に束縛の逆順（新しい束縛が先）。名前で参照できなくなるだけで、寿命は普通の local と同じです。
+- **覆われたコピー可能束縛の寿命は変わらない**：コピー可能な旧束縛は通常のローカル束縛と同じくスコープ離脱まで生存し、破棄はスコープ離脱時に束縛の逆順（新しい束縛が先）。名前で参照できなくなるだけで、寿命は普通のローカル束縛と同じです。
 - `guard`/`match`/`if` のパターン束縛が同名で値を絞り込めるのは、この一般規則の帰結であって特別扱いではない（「絞り込みのときだけ同名可」という線引きは設けない）。
 - 再宣言で覆って一度も読まれない前の束縛は、未使用束縛として診断（lint）で拾える（Rust 同様）。
 

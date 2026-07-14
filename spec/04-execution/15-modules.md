@@ -370,7 +370,7 @@ import @Std/Testing with { expect, expectEq, expectNe, expectApprox }
 ABI は**コンパイラが定義する閉じた集合**（ユーザーが新 ABI を定義することはできない＝intrinsic 床と同じコンパイラ原始要素）なので、**文字列ではなく bareword** で書きます（import パスを直書きするのと同じ「本質的に文字列でない箇所はクォートなし」方針）。可読性のため**パレンで括る**：`extern(c)` / `repr(c)`。
 
 - 未知の ABI（`extern(florble)` 等）は **Plew 層で即 `unknown ABI` エラー**（曖昧はエラー・補完はする/忖度はしない）。文字列にしても集合は閉じる（Rust も `extern "florble"` はエラー）ので、bareword で失うものはない。
-- ABI 名にハイフンが要る場合（C の `C-unwind` 等）は camelCase で表す（`cUnwind`）。Plew の文脈キーワード（`inout`/`noLocal`/`defaultExtension`）と同じ綴り方針。
+- ABI 名にハイフンが要る場合（C の `C-unwind` 等）は camelCase で表す（`cUnwind`）。Plew の文脈キーワード（`inout`/`sendable`/`defaultExtension`）と同じ綴り方針。
 - コアライブラリの intrinsic 床も同じ記法＝**`extern(plewIntrinsic) { … }`**（旧 `extern "plew-intrinsic"` の bareword 化）。
 
 ### 役割（方向・レイアウト）× ABI の 2 軸
@@ -583,6 +583,6 @@ val m = LLVMModuleCreateWithNameInContext(cname.ptr, ctx)  // 呼び出し中有
 
 - **プラットフォーム幅型の変換規則**：`as`（無損失）と `TryFrom`（可謬）の閾値の厳密化・`CSize`↔`USize`↔`U64` の関係。
 - **ハンドルの等価**：ポインタ同一性で `Eq` を提供するか。当面は非提供で開始し additive 可。
-- **spawn/local**：生ハンドル/ポインタを `local`（`Ref` 同様 spawn 不可・保守的）とするか、コピー可能な 1 語として spawn 越境を許す（正直に危険・race-free 保証は境界で切れると明記）か。
+- **spawn/sendability**：生ハンドル/ポインタを `nonsendable`（`Ref` 同様 spawn 不可・保守的）とするか、sendable な 1 語として spawn 越境を許す（正直に危険・race-free 保証は境界で切れると明記）か。
 - **使わせる側（export＝Plew→C 公開）＝未定**：Plew 関数を C へ公開する綴り・マングル抑制・可視性（既存 `export` モジュール公開との整合）・呼出規約の既定。既存 `export` キーワードと紛らわしく要設計・libLLVM-C 利用には不要なので本節スコープ外。
 - **型エイリアス**（`type FooRef = CPtr[FooOpaque]`）と **`repr(packed)`/`callconv` 軸**：当面は不透明 `type` と `repr(c)` のみ、両者は後続 additive。

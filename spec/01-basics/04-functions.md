@@ -12,7 +12,7 @@ export async fn functionName[T, U](
 }
 ```
 
-引数のモード（`borrow`／`inout`／`move`・コピー可能は既定で by-value）、`async fn`／`spawn fn`、型引数の能力マーカー（`allowUnique`／`noLocal`）は [値・変数・所有権](03-values.md)・[非同期処理とメモリ管理](../04-execution/14-concurrency.md)・[ジェネリクス](../02-type-system/06-generics.md) を参照。
+引数のモード（`borrow`／`inout`／`move`・コピー可能は既定で by-value）、`async fn`／`spawn fn`、型引数の能力マーカー（`allowUnique`／`sendable`）は [値・変数・所有権](03-values.md)・[非同期処理とメモリ管理](../04-execution/14-concurrency.md)・[ジェネリクス](../02-type-system/06-generics.md) を参照。
 
 名前付きの `fn` 宣言は**呼び出せる宣言**であって、第一級の関数値ではありません。裸の関数名を値として読めず、関数値が必要なら[無名関数（クロージャ）](#無名関数クロージャ)で明示的に包みます。
 
@@ -207,6 +207,68 @@ numbers.mapEach(transform: doubleValue)   // ❌ 型エラー: fn(value:) は fn
 val f: fn(n: I32) -> I32 = fn(n) { return n * 2 }   // n: I32 の「: I32」は推論。名前 n はラベルとして一致が要る
 ```
 
+### sendable クロージャ
+
+別スレッドへ安全に送れる関数値は、型とリテラルの両方で **`sendable fn`** と明示します。
+
+```plew
+val work: sendable fn(input: Data) -> Report = sendable fn(input: Data) -> Report {
+    return analyze(input: input)
+}
+```
+
+通常の `fn` は、キャプチャを解析すれば安全だと分かる場合でも暗黙に sendable にはなりません。Plew の「意味は唱えた通り」に従い、sendable 保証を得るにはリテラルの宣言地点で `sendable fn` と書きます。期待型が `sendable fn` でも通常の `fn` リテラルを暗黙に昇格しません。
+
+```plew
+fn dispatch(task~: sendable fn()) { /* 別スレッドへ送る */ }
+
+dispatch(sendable fn() { calculate() })  // OK
+dispatch(fn() { calculate() })           // エラー：fn は暗黙に sendable にならない
+```
+
+`sendable fn(...) -> R` から同じシグネチャの `fn(...) -> R` への変換は、保証を捨てるだけなので暗黙に許可します。逆方向は許可しません。
+
+```plew
+val transferable = sendable fn() { calculate() }
+val ordinary: fn() = transferable                 // OK：sendable 保証を消去
+
+val unknown = fn() { calculate() }
+val rejected: sendable fn() = unknown             // エラー：保証を後から獲得できない
+```
+
+`sendable fn` はキャプチャ環境も sendable でなければなりません。
+
+- キャプチャなしは sendable。
+- sendable な `val` は**値としてコピー**して不変スナップショットをキャプチャできる。
+- `mut val` は参照キャプチャ用の可変ストレージを共有するため、読み取りだけでもキャプチャできない。
+- `Ref`、nonsendable 値、`borrow`／`inout` はキャプチャできない。
+- `unique` 値は通常のクロージャと同じく当面キャプチャ不可（将来 move capture を追加する余地はある）。
+
+```plew
+val factor = 2
+val scale = sendable fn(value: I64) -> I64 { return value * factor } // factor のスナップショット
+
+mut val count = 0
+val increment = sendable fn() { count += 1 }
+// エラー：sendable fn は mut val `count` を参照キャプチャできない
+
+val state = <Ref value=0 />
+val read = sendable fn() -> I64 { return state->value }
+// エラー：sendable fn は nonsendable な `state` をキャプチャできない
+```
+
+関数型をフィールドに持つ型にも通常の構造的判定が働きます。`fn()` は sendable 保証を持たないため、それをフィールドに持つ struct は nonsendable です。`sendable fn()` フィールドなら、ほかのフィールドも sendable である限り外側も sendable です。
+
+```plew
+struct Button {
+    val onClick: fn()                 // Button は nonsendable
+}
+
+struct Job {
+    val run: sendable fn()            // 他フィールドも sendable なら Job も sendable
+}
+```
+
 ### 環境のキャプチャ
 
 クロージャは外側のスコープの変数を**参照でキャプチャ**します（Swift と同じ）。`mut val` をキャプチャした閉包は、その変数を外側のスコープと**共有**します ── 閉包内の変更は外からも見え、呼び出しをまたいで保持されます。
@@ -238,6 +300,6 @@ fn f() {
 
 - `val`（不変束縛）のキャプチャは読み取り専用。書き換え可能なのは `mut val` のキャプチャだけです。
 - **単一スレッドだから安全**：このイベントループモデルでは共有された可変変数への同時アクセスは起きず、論理的なインタリーブ（再入）だけです（JS と同じ）。
-- **`spawn` だけが例外**：スレッド境界を越えるキャプチャは**コピー/move（不変スナップショット）**に限られます。よって `mut val` を参照キャプチャした閉包は **`spawn` できません**（変数のストレージをスレッド間で共有できないため＝`Ref` を含む値と同じ `local` 扱い）。ベア `spawn { }` はコピー可能のみ暗黙キャプチャ（`unique`/`Ref`/`borrow` は不可。`unique` をスレッドへ渡すなら `spawn fn`）→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)。
+- **`sendable fn` と `spawn` だけが例外**：スレッド境界を越えるキャプチャは**コピー/move（不変スナップショット）**に限られます。`sendable fn` は上記のとおり宣言地点で検査し、`mut val` を参照キャプチャした通常の `fn` は nonsendable です。ベア `spawn { }` はそれ自体が明示的なスレッド境界なので、コピー可能かつ sendable な値だけをスナップショットで暗黙キャプチャします（`unique`/`Ref`/`borrow` は不可。`unique` をスレッドへ渡すなら `spawn fn`）→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)。
 - **`unique` 値はキャプチャできない**（閉包へ move する構文は当面なし）。
 - `Ref` を使う動機は閉包のキャプチャ**ではなく**、[`unique`](03-values.md#uniqueコピー不可型) 値を複数箇所で共有して取り回したいときや、意図した**循環参照**を作るときなど、独立した保有者の間でヒープ上の同一性を共有したい場合です（→ [Ref / WeakRef](03-values.md#ref--weakref共有可変)）。閉包が保持する `Ref` で循環ができ得る構造は [`WeakRef`](03-values.md#ref--weakref共有可変) で断ち切ります。

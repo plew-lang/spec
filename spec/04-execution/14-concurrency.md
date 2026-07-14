@@ -2,7 +2,7 @@
 
 Plew は JavaScript と同様の**シングルプロセス・シングルスレッド + イベントループ**を基盤とします。重い処理を別スレッドで動かしたいときだけ `spawn` でスレッドを立てます。メモリは **ARC（参照カウント）** で管理し、破棄は決定的（[`deinit`](../01-basics/03-values.md#deinit)）、循環は [`WeakRef`](../01-basics/03-values.md#ref--weakref共有可変) で断ち切ります。
 
-> **用語**：本書は **`unique`／`local` の 2 マーカーを基準**に記述します。**「`unique` でない」＝コピー可能**（他言語でいう *Copyable*）、**「`local` でない」＝spawn 境界を越えられる**（他言語でいう *Sendable*）。*Copyable*／*Sendable* は概念の言い換えにすぎず**キーワードではありません** ── コードも本文も `unique`／`local` とその否定で表します。
+> **用語**：本書は、コピー可否を **`unique`／コピー可能**、スレッド間の移送可否を **`sendable`／`nonsendable`** と表します。`sendable`／`nonsendable` はキーワードであり、型・クロージャ・generic 境界に現れます（→ [値・変数・所有権](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
 ## 基本的な非同期処理（async / await）
 
@@ -33,7 +33,7 @@ async fn main() {
 
 ### unique 結果と `allowUnique`（v1 は不可・将来）
 
-v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべてコピー可能な型に限定**（`allowUnique` 未導入）。これは `unique` の制約であって、`local` の制約とは別です。帰結：
+v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべてコピー可能な型に限定**（`allowUnique` 未導入）。これは `unique` の制約であって、sendability の制約とは別です。`Promise[T]` は単一スレッド内で使うため nonsendable な `T` も許容しますが、別スレッドから結果を受け取る `JoinHandle` は宣言を **`struct JoinHandle[sendable T]`** として `T` の sendability も要求します。帰結：
 
 - async/spawn は **unique 結果を返せない**（`-> Promise[unique]` / `-> JoinHandle[unique]` 不可）。async で unique を持ち回るなら **`Ref` 包み**（`Ref` は async を越えられる）。
 - **unique を generic に入れるのは常に `Ref` 包み**（`Optional[Ref[File]]`・`Array[Ref[File]]`）。`Ref` はコピー可能なので通常のコピー可能なコレクションになり、`match`/peek/反復が普通に効く（move-out 専用 API も `take()` も不要）。
@@ -43,7 +43,7 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべ
 
 - **ARC（参照カウント）で管理**：スコープを抜けて最後の所有者／`Ref` が消えると**即座に**解放され、`deinit` が走る（決定的破棄＝ファイル・ソケット等の資源解放に使える）。ただし**`panic` 時は abort で巻き戻さないので `deinit` は走らない**（資源は OS が回収・[制御構造 § panic と発散](../03-expressions/11-control-flow.md#panic-と発散) 参照）。決定的破棄が保証されるのは正常終了パスのみ。
 - **循環は `WeakRef` で**：参照カウントは循環を回収しないので、親子の逆リンク等は `WeakRef` で断ち切る。**循環が生じ得るのは `Ref` グラフだけ**（値世界＝`Array`/`String`/`Dictionary`・[自動箱化された再帰値型](../02-type-system/05-structs-enums.md#再帰的な値型)は構造上つねに木／DAG）なので、純粋 ARC は値世界を取りこぼさない。
-  > **将来 additive：循環の自動回収。** `Ref` グラフは小さく隔離され（trace 対象は `Ref` ボックス＋`mut val` 参照キャプチャしたクロージャだけ）、しかも **`Ref` は非 atomic かつスレッドローカル**（spawn を越えない＝per-thread）・**単一イベントループ**（ターン間が天然のセーフポイント）・フルマネージドなので、ARC の上に **`Ref` グラフ限定のサイクルコレクタ**（Bacon–Rajan の trial deletion・CPython/PHP で実証）を **per-thread・idle 実行**で非破壊に足せる。**ゴミ循環を検出したときの挙動**は、(1) retain path 付きで **loud に報告**（dedup・診断フック経由・**全ビルド共通＝release 含む**＝`assert`/overflow panic と同じく「意味論を変えるビルドを持たない」原則の一貫）、(2) **メモリを回収**、(3) **循環メンバの `deinit` は走らせない**。`deinit` の決定的契約は正常路（スコープ離脱・`return`・`try`/`Result` 伝播）のみで保証し、`panic`（abort）と「リークした循環」はともに契約外の脱出で deinit を飛ばす（[panic と発散](../03-expressions/11-control-flow.md#panic-と発散) と対称）。**deinit の有無で挙動を分けない**ので「構造体に `deinit` を足したら循環がリークし始める」崖は生じず、循環メンバの deinit が予期しない時刻に走る驚きも生じない（走らないだけ）。重大度は値の嘘ではない（資源の無駄＋deinit skip）ので panic でなくログ。手動 `WeakRef` は「正しさのため必須」から「決定性・性能の opt-in」へ格下げされ、`Ref[File]` 等を意図せず循環に閉じ込めた場合はメモリは回収され fd は閉じず loud に報告される（直し方は `WeakRef` で輪を切る→正常路で deinit が走る）。実装順は reporter 先行→回収追加（どちらも非破壊）。
+  > **将来 additive：循環の自動回収。** `Ref` グラフは小さく隔離され（trace 対象は `Ref` ボックス＋`mut val` 参照キャプチャしたクロージャだけ）、しかも **`Ref` は非 atomic かつ nonsendable**（spawn を越えない＝per-thread）・**単一イベントループ**（ターン間が天然のセーフポイント）・フルマネージドなので、ARC の上に **`Ref` グラフ限定のサイクルコレクタ**（Bacon–Rajan の trial deletion・CPython/PHP で実証）を **per-thread・idle 実行**で非破壊に足せる。**ゴミ循環を検出したときの挙動**は、(1) retain path 付きで **loud に報告**（dedup・診断フック経由・**全ビルド共通＝release 含む**＝`assert`/overflow panic と同じく「意味論を変えるビルドを持たない」原則の一貫）、(2) **メモリを回収**、(3) **循環メンバの `deinit` は走らせない**。`deinit` の決定的契約は正常路（スコープ離脱・`return`・`try`/`Result` 伝播）のみで保証し、`panic`（abort）と「リークした循環」はともに契約外の脱出で deinit を飛ばす（[panic と発散](../03-expressions/11-control-flow.md#panic-と発散) と対称）。**deinit の有無で挙動を分けない**ので「構造体に `deinit` を足したら循環がリークし始める」崖は生じず、循環メンバの deinit が予期しない時刻に走る驚きも生じない（走らないだけ）。重大度は値の嘘ではない（資源の無駄＋deinit skip）ので panic でなくログ。手動 `WeakRef` は「正しさのため必須」から「決定性・性能の opt-in」へ格下げされ、`Ref[File]` 等を意図せず循環に閉じ込めた場合はメモリは回収され fd は閉じず loud に報告される（直し方は `WeakRef` で輪を切る→正常路で deinit が走る）。実装順は reporter 先行→回収追加（どちらも非破壊）。
 - 値意味論なので、共有された可変状態は `Ref` 経由のみ生まれる（→ [値・変数・所有権](../01-basics/03-values.md)）。
 
 ## 境界を越えるもの（move / copy / Ref / 借用）
@@ -55,6 +55,8 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべ
 | 値（コピー可能） | ○ コピー（CoW＝遅延・バッファ共有） | ○ コピー（**境界で実体化＝eager**） |
 | `unique` 値 | ○ `move` | ○ `move`（所有を移す） |
 | `Ref[T]` | ○（共有・メモリ安全） | ✗（共有可変＋非 atomic 参照カウント＝競合） |
+| `fn(...)` | ○ | ✗（sendable 保証なし） |
+| `sendable fn(...)` | ○ | ○（キャプチャ環境も境界で実体化） |
 | 借用 `borrow`/`inout` | ✗ | ✗ |
 
 畳むと **2 つの規則**：
@@ -65,7 +67,7 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべ
 
 ### CoW 値は spawn 境界で実体化する（eager copy）
 
-`Array`/`String`/`Dictionary` のような **CoW 値型は内部バッファを参照カウントで共有**します（`Ref` を含まないので `local` ではなく、spawn を越えられます）。ただしバッファの参照カウントは `Ref` と同じく**非 atomic**なので、もし送信側と受信側スレッドが同じバッファを共有したまま走ると、`Ref` で禁じたのと**まったく同じ競合**（バッファの count を 2 スレッドが同時に触る）が起きます。
+`Array`/`String`/`Dictionary` のような **CoW 値型は内部バッファを参照カウントで共有**します（`Ref` を含まない sendable 型なので、spawn を越えられます）。ただしバッファの参照カウントは `Ref` と同じく**非 atomic**なので、もし送信側と受信側スレッドが同じバッファを共有したまま走ると、`Ref` で禁じたのと**まったく同じ競合**（バッファの count を 2 スレッドが同時に触る）が起きます。
 
 これを防ぐため、**コピー可能な値が spawn 境界を越えるときは CoW の遅延を打ち切り、その瞬間にバッファを実体化（ディープコピー）します**。送信側と受信側はそれぞれ独立したバッファ＝独立した参照カウントを持ち、スレッド間でバッファを一切共有しません。
 
@@ -84,9 +86,9 @@ val result = await handle.join()             // handle: JoinHandle[T]、join(): 
 spawn { background() }                        // 束縛しなければ detached
 ```
 
-- **ベアの `spawn { }` のキャプチャはコピー可能のみ（暗黙コピー＝スナップショット）**。`borrow`/`inout`・`Ref`・`local` を触れば**コンパイルエラー**（経路を示す）。**`unique` のキャプチャもエラー**（ブロックへ move する構文は当面持たない＝additive）。
+- **ベアの `spawn { }` のキャプチャはコピー可能かつ sendable な値のみ（暗黙コピー＝スナップショット）**。`borrow`/`inout`・`Ref`・nonsendable 値を触れば**コンパイルエラー**（nonsendable の根へのフィールド経路を示す）。**`unique` のキャプチャもエラー**（ブロックへ move する構文は当面持たない＝additive）。`spawn` 自体が明示的なスレッド境界なので、ブロックに別の `sendable` 修飾は重ねません。
 - **`unique` をスレッドへ渡すには `spawn fn`**（下記）の `move` 引数を使う。
-- **戻りはハンドル構造体 `JoinHandle[T]`**：`join() -> Promise[T]` を持つ（名前はその役割＝「join するためのハンドル」に由来。スレッドそのものを走らせるのは `spawn` で、この値はそれへのハンドル。Rust の `JoinHandle` と同名）。`await handle.join()` で結果。**ランタイムは全スレッド完了まで生存**してから終了する（Go の「main 終了で goroutine kill」footgun を避ける）。
+- **戻りはハンドル構造体 `JoinHandle[T]`**（宣言側は `struct JoinHandle[sendable T]`）：`join() -> Promise[T]` を持つ（名前はその役割＝「join するためのハンドル」に由来。スレッドそのものを走らせるのは `spawn` で、この値はそれへのハンドル。Rust の `JoinHandle` と同名）。spawn ブロックが `give`/`return` する `T` もスレッド境界を越えるため sendable 必須。`await handle.join()` で結果。**ランタイムは全スレッド完了まで生存**してから終了する（Go の「main 終了で goroutine kill」footgun を避ける）。
 - **`spawn` 内 `panic` はプロセス全体を停止**する（panic=abort・スレッド単位の unwind/catch は無い）。スレッド単位で扱いたい失敗は `spawn fn … -> Result[T, E]` のように **`Result` を自分で返す**＝そのとき `join()` は `Promise[Result[T, E]]` を返す（T がそうだから）。**`join()` が暗黙に `Result` で包むことはありません** ── Rust の `JoinHandle::join() -> Result<T, _>` は panic を捕捉して `Err` 化するが、Plew は panic がプロセスを落とすので捕捉対象が無く、`Promise[T]` を正直にそのまま返す（hidden meaning を作らない）。
 
 ### spawn fn — 引数で値を渡してスレッド起動
@@ -102,23 +104,24 @@ val report = await handle.join()
 ```
 
 - `spawn fn g(...) -> JoinHandle[T]` は呼ぶとスレッドを起動しハンドルを返す（`async fn ... -> Promise[T]` と平行・本体の `return e` を `JoinHandle[T]` に自動ラップ）。**宣言された fn はキャプチャを持たず引数だけ**＝何が境界を越えるか完全に明示。
-- 引数は `move`（unique・所有移動）／copy（コピー可能）。`borrow`/`inout`・`Ref`/`local` は渡せない（境界規則どおり）。
+- 引数は `move`（unique・所有移動）／copy（コピー可能）。いずれも型は sendable でなければならず、`borrow`/`inout`・`Ref`/nonsendable 値は渡せない（境界規則どおり）。戻りの `T` も `JoinHandle` 宣言の `[sendable T]` 制約により sendable 必須。
 
-## local（spawn を越えられない型）
+## sendable / nonsendable
 
-**spawn 境界を越えられるのは `local` でない値だけ**です（「`local` でない」＝**推移的に `Ref` を含まない**）。
+**spawn 境界を越えられるのは sendable 値だけ**です。
 
-- **`local struct`**（→ [値・変数・所有権](../01-basics/03-values.md)）は `Ref`（や他の `local` 型）をフィールドに持つ型。`Ref` 自体も `local`。**`local` な値は spawn 境界を越えられない**。
-- spawn のキャプチャ／チャネルで送る値は **`local` でないこと**。違反は**そのキャプチャ／送信地点でコンパイルエラー**（原因の `Ref` への経路を示す）。
-- ジェネリックで spawn するときは `[noLocal T]` で T を **`local` でないもの**に制約する（→ [ジェネリクス](../02-type-system/06-generics.md)）。
-- async（単一スレッド）では `local`/`Ref` も自由＝この制約は **spawn 境界だけ**に効く。
+- `Ref` は組み込みの **`nonsendable struct`**。ユーザー定義型も `nonsendable struct` と宣言できる。nonsendable フィールド・enum payload・generic 実引数を含む型には性質が構造的に自動伝播する（→ [値・変数・所有権](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
+- 通常の `fn(...)` は sendable 保証を持たず、スレッドへ送る関数値は宣言地点で `sendable fn(...)` と明示する。`sendable fn` から `fn` への保証消去だけ暗黙に許す（→ [関数](../01-basics/04-functions.md#sendable-クロージャ)）。
+- spawn のキャプチャ／チャネルで送る値は **sendable であること**。違反は**そのキャプチャ／送信地点でコンパイルエラー**（nonsendable 宣言または関数フィールドへの経路を示す）。
+- ジェネリックで spawn するときは `[sendable T]` で T の sendability を明示的に要求する（→ [ジェネリクス](../02-type-system/06-generics.md)）。
+- async（単一スレッド）では nonsendable 値や通常の `fn` も自由＝この制約は **spawn 境界だけ**に効く。
 
 ## チャネル
 
 スレッド間で値を送るにはチャネルを使います（「共有」ではなく「送信」＝*share memory by communicating*）。**具体的な型・API はコアライブラリ送り**ですが、モデルは確定しています：
 
-- チャネルは**スレッド安全なプリミティブ**で、`Sender`/`Receiver` ハンドルは `local` でない（`Ref` と違い内部が atomic なので spawn を越えられる）。
-- **送る値は `local` でないこと**（move/copy で渡る・`Ref` は送れない）。これで送信経由でもスレッド間に共有可変が生まれず race-free を保つ。
+- チャネルは**スレッド安全なプリミティブ**で、概念上 `struct Sender[sendable T]` / `struct Receiver[sendable T]` と宣言する。ハンドル自体も sendable（`Ref` と違い内部が atomic なので spawn を越えられる）。
+- **送る値は sendable であること**（move/copy で渡る・`Ref` や通常の `fn` は送れない）。これで送信経由でもスレッド間に共有可変が生まれず race-free を保つ。
 - 方針は**複数 Sender**。所有権で「Receiver は単一所有」を強制はしない（複数箇所が持て、`receive()` も複数回呼べる）。`receive() -> Result[T, ChannelClosed]` 方向。マルチコンシューマの意味論は core-lib 設計で詰める。
 
 ## 並行安全性 ── 実質 race-free

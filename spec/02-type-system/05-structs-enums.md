@@ -123,7 +123,7 @@ val l: Optional[TreeNode]      = …   // 値の木。コピーで独立
 val g: Optional[Ref[TreeNode]] = …   // 共有可変グラフ。コピーでノード共有・循環可（→ WeakRef）
 ```
 
-`Ref` を含む型は `local` になり spawn 境界を越えられません（[値・変数・所有権](../01-basics/03-values.md) / [非同期](../04-execution/14-concurrency.md)）。素の再帰値型は `Ref` を含まないため、木や AST をそのまま別スレッドへ送れます。
+`Ref` は nonsendable であり、それを含む型にも nonsendable が自動伝播して spawn 境界を越えられません（[値・変数・所有権](../01-basics/03-values.md) / [非同期](../04-execution/14-concurrency.md)）。素の再帰値型は `Ref` を含まないため、木や AST をそのまま別スレッドへ送れます。
 
 > 終端ケース（`Optional` の `None` 等）を持たない再帰（`struct Node { val child: Node }`）も**型としては合法**です。レイアウトは有限になりますが、有限の値を構築する手段がないだけです（Rust の `Box` 版と同じ状況）。これを禁じるのはコンパイラに不要なチェックを課すだけなので、特別扱いしません。
 
