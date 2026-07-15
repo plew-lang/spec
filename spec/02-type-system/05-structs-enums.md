@@ -39,6 +39,8 @@ export enum Color[T] where T: Format {
 
 **`unique enum`**：struct と同様、`unique` を前置した enum は[コピー不可・move 専用](../01-basics/03-values.md#uniqueコピー不可型)（Swift の noncopyable enum と同型）。unique（または unique を推移的に含む型）をペイロードに持つ enum は `unique enum` 明示必須（伝染規則は struct のフィールドと同一）。ただし v1 では enum 型自身の明示 `deinit` 本体は持てません。enum の破棄時は active payload が通常通り破棄されます。
 
+**`nonsendable enum`**：payload の型に依存しないスレッド束縛を表すときは `nonsendable` を前置できます。全バリアントが payload を持たない、または全 payload が sendable でも、この enum 自身は実スレッド境界を越えません。逆に nonsendable な payload を持つ enum は明示がなくても構造的に nonsendable です。肯定形の `sendable enum` はなく、通常の enum は payload から sendability を自動導出します（→ [sendable / nonsendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
+
 ## フィールドの統一原則
 
 構造体と列挙型バリアントは、どちらも**名前付きフィールド**のみを持ちます。位置指向の無名ペイロード（`Some(T)` のようなもの）は書けません。生成と分解は両者で同じ構文に従います。**宣言だけは異なり**、バリアントのフィールドは修飾子なしの `field: Type` です（理由は下記）。

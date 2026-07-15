@@ -19,7 +19,7 @@ async fn main() {
 }
 ```
 
-- **戻り型は `Promise[T]` と明示して書き**、本体の `return e`（`e: T`）はコンパイラが `Promise[T]` に包みます（TypeScript と同じ）。`await` はその `Promise[T]` を `T` に開きます。
+- **戻り型は `Promise[T]` と明示して書き**、本体の `return e`（`e: T`）はコンパイラが `Promise[T]` に包みます（TypeScript と同じ）。`await` はその `Promise[T]` を `T` に開きます。`Promise[T]` はイベントループに所属するため、`T` が sendable でも **常に nonsendable** です。コピーは同じイベントループ上で同じ完了を共有します。
 - 戻り型を省略した `async fn`（`main` など）は、値を返さない `Promise` を返します。
 - **`async` は単一スレッド上の協調的中断**で、別スレッドは起きません。所有権・借用は同期コードと同じに効きます（`unique` 値を await を跨いで保持してもよい）。
 
@@ -33,9 +33,9 @@ async fn main() {
 
 ### unique 結果と `allowUnique`（v1 は不可・将来）
 
-v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべてコピー可能な型に限定**（`allowUnique` 未導入）。これは `unique` の制約であって、sendability の制約とは別です。`Promise[T]` は単一スレッド内で使うため nonsendable な `T` も許容しますが、別スレッドから結果を受け取る `JoinHandle` は宣言を **`struct JoinHandle[sendable T]`** として `T` の sendability も要求します。帰結：
+v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型の型引数はすべてコピー可能な型に限定**（`allowUnique` 未導入）。これは型引数の `unique` 制約であって、コンテナ自身のコピー可否や sendability とは別です。`Promise[T]` は単一スレッド内で使うため nonsendable な `T` も許容します。一方、別スレッドから結果を受け取る `JoinHandle` は概念上 **`unique struct JoinHandle[sendable T]`** で、`T` の sendability を要求し、ハンドル自身は sendable です。帰結：
 
-- async/spawn は **unique 結果を返せない**（`-> Promise[unique]` / `-> JoinHandle[unique]` 不可）。async で unique を持ち回るなら **`Ref` 包み**（`Ref` は async を越えられる）。
+- async/spawn の**本体は unique な `T` を結果として返せない**（`-> Promise[unique]` / `-> JoinHandle[unique]` 不可）。`spawn` 呼び出し自体が返す外側の `JoinHandle[T]` は unique です。async で unique を持ち回るなら **`Ref` 包み**（`Ref` は async を越えられる）。
 - **unique を generic に入れるのは常に `Ref` 包み**（`Optional[Ref[File]]`・`Array[Ref[File]]`）。`Ref` はコピー可能なので通常のコピー可能なコレクションになり、`match`/peek/反復が普通に効く（move-out 専用 API も `take()` も不要）。
 - by-value の unique を generic で扱う（`Optional[unique]`・`Promise[unique]`・`Array[unique]`）には **借用束縛＝ライフタイム**が要り（要素を取り出さず借用で覗く操作のため）、v1 の非 escape 借用では実装できない。**`allowUnique` は将来の additive**（保持系＝Optional/Promise が先・Array/Iterable は escaping borrow 導入後）。それまでは `Ref` 包みで代替。
 
@@ -85,6 +85,8 @@ Plew は依存パッケージを含めてソースから whole-program コンパ
 | `Ref[T]` / `WeakRef[T]` | ○（共有・メモリ安全） | ✗（per-thread の共有可変グラフへ到達するため） |
 | `fn(...)` | ○ | ✗（sendable 保証なし） |
 | `sendable fn(...)` | ○ | ○（キャプチャ環境も静的に RC 方式を選択） |
+| `Promise[T]` | ○ | ✗（イベントループに所属し、`T` に関係なく nonsendable） |
+| `JoinHandle[T]`（`T` は sendable） | ○ `move` | ○ `move`（sendable かつ unique） |
 | 借用 `borrow`/`inout` | ✗ | ✗ |
 
 畳むと **2 つの規則**：
@@ -110,13 +112,13 @@ Plew は依存パッケージを含めてソースから whole-program コンパ
 ```plew
 val n = 100                                  // コピー可能
 val handle = spawn { give heavy(input: n) }  // n は暗黙コピーでキャプチャ
-val result = await handle.join()             // handle: JoinHandle[T]、join(): Promise[T]、await で T
+val result = await handle.join()             // join() が unique handle を消費し、呼出側ループの Promise[T] を返す
 spawn { background() }                        // 束縛しなければ detached
 ```
 
 - **ベアの `spawn { }` のキャプチャはコピー可能かつ sendable な値のみ（暗黙コピー＝スナップショット）**。`borrow`/`inout`・`Ref`・nonsendable 値を触れば**コンパイルエラー**（nonsendable の根へのフィールド経路を示す）。**`unique` のキャプチャもエラー**（ブロックへ move する構文は当面持たない＝additive）。`spawn` 自体が明示的なスレッド境界なので、ブロックに別の `sendable` 修飾は重ねません。
 - **`unique` をスレッドへ渡すには `spawn fn`**（下記）の `move` 引数を使う。
-- **戻りはハンドル構造体 `JoinHandle[T]`**（宣言側は `struct JoinHandle[sendable T]`）：`join() -> Promise[T]` を持つ（名前はその役割＝「join するためのハンドル」に由来。スレッドそのものを走らせるのは `spawn` で、この値はそれへのハンドル。Rust の `JoinHandle` と同名）。spawn ブロックが `give`/`return` する `T` もスレッド境界を越えるため sendable 必須。`await handle.join()` で結果。**ランタイムは全スレッド完了まで生存**してから終了する（Go の「main 終了で goroutine kill」footgun を避ける）。
+- **戻りは sendable かつ unique なハンドル `JoinHandle[T]`**（概念上 `unique struct JoinHandle[sendable T]`）。ハンドルは「結果を一度だけ join する権利」を所有し、`move fn join() -> Promise[T]` が self を消費します。したがってコピーや二重 join はできませんが、別スレッドへ `move` してそこで join できます。返る `Promise[T]` は **join を呼んだスレッドのイベントループ**に所属します。spawn ブロックが `give`/`return` する `T` もスレッド境界を越えるため sendable 必須です。ハンドルを join せず破棄すると join 権と結果を放棄する detached 扱いになりますが、実行中のスレッドは停止しません。**ランタイムはハンドルの有無にかかわらず全スレッド完了まで生存**してから終了します（Go の「main 終了で goroutine kill」footgun を避ける）。
 - **`spawn` 内 `panic` はプロセス全体を停止**する（panic=abort・スレッド単位の unwind/catch は無い）。スレッド単位で扱いたい失敗は `spawn fn … -> Result[T, E]` のように **`Result` を自分で返す**＝そのとき `join()` は `Promise[Result[T, E]]` を返す（T がそうだから）。**`join()` が暗黙に `Result` で包むことはありません** ── Rust の `JoinHandle::join() -> Result<T, _>` は panic を捕捉して `Err` 化するが、Plew は panic がプロセスを落とすので捕捉対象が無く、`Promise[T]` を正直にそのまま返す（hidden meaning を作らない）。
 
 ### spawn からのトップレベルアクセス
@@ -168,7 +170,8 @@ val report = await handle.join()
 
 **spawn 境界を越えられるのは sendable 値だけ**です。
 
-- `Ref` は組み込みの **`nonsendable struct`**。ユーザー定義型も `nonsendable struct` と宣言できる。nonsendable フィールド・enum payload・generic 実引数を含む型には性質が構造的に自動伝播する（→ [値・変数・所有権](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
+- `Ref` は組み込みの **`nonsendable struct`**。ユーザー定義型も `nonsendable struct` / `nonsendable enum` と宣言できる。nonsendable フィールド・enum payload・generic 実引数を含む型には性質が構造的に自動伝播する（→ [値・変数・所有権](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
+- `Promise[T]` はイベントループに所属するため常に nonsendable。`JoinHandle[T]` は `T` に sendable を要求するスレッド安全な組み込みハンドルで、ハンドル自身も sendable ですが、join 権を一つに保つため unique です。
 - 通常の `fn(...)` は sendable 保証を持たず、スレッドへ送る関数値は宣言地点で `sendable fn(...)` と明示する。`sendable fn` から `fn` への保証消去だけ暗黙に許す（→ [関数](../01-basics/04-functions.md#sendable-クロージャ)）。
 - 無印の存在型 `any P` は sendability 保証を消去するため nonsendable。境界を越える存在型は `any sendable P` と明示し、注入する具体型も sendable でなければならない。`any sendable P` → `any P` の保証消去だけ暗黙に許す（→ [トレイト](../02-type-system/08-traits.md#存在型の-sendability)）。
 - spawn のキャプチャ／チャネルで送る値は **sendable であること**。違反は**そのキャプチャ／送信地点でコンパイルエラー**（nonsendable 宣言または関数フィールドへの経路を示す）。
