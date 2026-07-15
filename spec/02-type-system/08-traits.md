@@ -220,6 +220,27 @@ for val s in shapes {
 
 `any P` は**第一級の型**で、型を書ける場所すべて（変数・フィールド・引数・戻り値・ジェネリック引数 `Array[any P]`・関連型束縛・[newtype](10-newtype.md) の underlying）に置けます。戻り値にも使えるので、具体型を隠す opaque な戻り（Swift の `some`）は別に設けず、存在型 `any` に一本化します。
 
+### 存在型の sendability
+
+無印の **`any P` は常に nonsendable** です。実行時にたまたま sendable な具体値だけが入っていても、型消去時に sendability 保証を保持していないため、whole-program の流入集合から保証を暗黙に回復しません。別スレッドへ送れる存在型は **`any sendable P`** と明示します。
+
+```plew
+val local: any Drawable = circle
+val transferable: any sendable Drawable = circle // Circle が sendable なら OK
+
+spawn { render(local) }        // Error：any Drawable は nonsendable
+spawn { render(transferable) } // OK
+```
+
+`any sendable P` へ具体値を注入するとき、その具体型が sendable でなければコンパイルエラーです。保証の変換は [`sendable fn` と通常の `fn`](../01-basics/04-functions.md#sendable-クロージャ) と同じ向きに限定します。
+
+- `any sendable P` → `any P` は、保証を捨てるだけなので暗黙変換できる。
+- `any P` → `any sendable P` は不可。中身が実際には sendable でも、消去済みの保証を後から回復しない。
+- `any sendable P` は `[sendable T]` を満たすが、`any P` は満たさない。
+- `any P` をフィールド/payloadに持つ外側は nonsendable。`any sendable P` は sendable な構成型として通常の構造的導出に参加する。
+
+`any sendable P` が保証するのは、型消去された具体値と existential storage の**移送可能性**です。動的に選ばれる witness が可変／nonsendable なトップレベル状態へ到達しないかは別軸であり、[`spawn` の実行依存グラフ](../04-execution/14-concurrency.md#spawn-からのトップレベルアクセス)が候補 witness の effect summary まで推移検査します。`Self` を返すメンバを `any sendable P` 越しに呼んだ場合、結果も保証を保って `any sendable P` へ再消去されます。
+
 ### 存在型とジェネリックは別物
 
 同じ「P に縛る」でも、ジェネリック境界と存在型は能力が違います（横着すると後者を書きがちですが、取り違えないこと）。
@@ -250,7 +271,7 @@ any Add[I32, Output = I32]          // OK
 
 `any P` という**型を作ること自体は常に valid** です。「このトレイトは存在型にできない」という型レベルの一律禁止は持ちません。代わりに**個々のメンバが呼べるかを使用箇所で判定**します。直感は「自分自身への操作・結果を返す操作は OK、自分と同じ未知の型の値を受け取る操作は NG」。
 
-- **呼べる**：`self` を受け取り、`Self` が**出力位置にしか出ない**メンバ。出力の `Self` は `any P` に再消去される（`fn clone() -> Self` は `any P` を返す）。関連型は具体型に確定しているので入力に現れても問題ない（`any Add[I32, Output = I32]` で `add(lhs~: any, rhs~: I32)` は呼べる）。
+- **呼べる**：`self` を受け取り、`Self` が**出力位置にしか出ない**メンバ。出力の `Self` はレシーバと同じ保証の存在型へ再消去される（`any P` 越しなら `any P`、`any sendable P` 越しなら `any sendable P`）。関連型は具体型に確定しているので入力に現れても問題ない（`any Add[I32, Output = I32]` で `add(lhs~: any, rhs~: I32)` は呼べる）。
 - **呼べない**：
   - `Self` が**非レシーバの入力位置**に現れるメンバ（`Eq` の `eq(lhs~: Self, rhs~: Self)` の `rhs`）。2 つの `any Eq` の具体型が一致する保証がないため、**その呼び出し行で**エラー。
   - **関連関数・factory**（`self` を受けない＝witness を運ぶレシーバが無い。`From.from` など）。

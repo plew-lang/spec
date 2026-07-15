@@ -170,6 +170,7 @@ val report = await handle.join()
 
 - `Ref` は組み込みの **`nonsendable struct`**。ユーザー定義型も `nonsendable struct` と宣言できる。nonsendable フィールド・enum payload・generic 実引数を含む型には性質が構造的に自動伝播する（→ [値・変数・所有権](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 - 通常の `fn(...)` は sendable 保証を持たず、スレッドへ送る関数値は宣言地点で `sendable fn(...)` と明示する。`sendable fn` から `fn` への保証消去だけ暗黙に許す（→ [関数](../01-basics/04-functions.md#sendable-クロージャ)）。
+- 無印の存在型 `any P` は sendability 保証を消去するため nonsendable。境界を越える存在型は `any sendable P` と明示し、注入する具体型も sendable でなければならない。`any sendable P` → `any P` の保証消去だけ暗黙に許す（→ [トレイト](../02-type-system/08-traits.md#存在型の-sendability)）。
 - spawn のキャプチャ／チャネルで送る値は **sendable であること**。違反は**そのキャプチャ／送信地点でコンパイルエラー**（nonsendable 宣言または関数フィールドへの経路を示す）。
 - ジェネリックで spawn するときは `[sendable T]` で T の sendability を明示的に要求する（→ [ジェネリクス](../02-type-system/06-generics.md)）。
 - async（単一スレッド）では nonsendable 値や通常の `fn` も自由＝この制約は **実スレッド境界（spawn・チャネル）だけ**に効く。

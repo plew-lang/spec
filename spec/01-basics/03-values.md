@@ -136,7 +136,7 @@ struct Session {
 
 これは [`unique`](#uniqueコピー不可型) と意図的に非対称です。`unique` はコピー可否と呼び出し規則を日常的に変える肯定的な所有権モードなので、unique フィールドを持つ外側にも `unique` の明示を要求します。一方、nonsendable の伝播は spawn 可能性を狭めるだけで、通常の単一スレッドコードの意味を変えません。日常コードへ不要な宣言を広げないため、外側の明示は要求しません。
 
-通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。generic 型では、**実際にフィールド/payloadとして所有する型引数**から構造的に導出します。例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。表現に現れない phantom 型引数だけでは外側の sendability は変わりません。明示的な `nonsendable struct` は、フィールドがすべて sendable でも sendability の導出を禁止します。
+通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。generic 型では、**実際にフィールド/payloadとして所有する型引数**から構造的に導出します。例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。表現に現れない phantom 型引数だけでは外側の sendability は変わりません。[存在型](../02-type-system/08-traits.md#存在型の-sendability)は無印 `any P` が nonsendable、保証を保持する `any sendable P` が sendable な構成型です。明示的な `nonsendable struct` は、フィールドがすべて sendable でも sendability の導出を禁止します。
 
 nonsendable 値は実スレッド境界（`spawn`・スレッド間チャネル）を越えられません。単一スレッド（`async` を含む）では sendable 値と全く同じに扱えます。関数値の明示的な sendability は [無名関数（クロージャ）](04-functions.md#sendable-クロージャ)を、境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
 
