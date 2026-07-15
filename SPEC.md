@@ -32,7 +32,7 @@ Plew は、複雑な状態を持つクライアントと、それを支える AP
 
 ### 第Ⅳ部 実行モデルとツール
 
-14. [非同期処理とメモリ管理](spec/04-execution/14-concurrency.md) — async/await、spawn（spawn fn）、静的な atomic RC 選択、境界規則（借用・Ref・トップレベル状態は越えない）、チャネル、実質 race-free
+14. [非同期処理とメモリ管理](spec/04-execution/14-concurrency.md) — async/await、spawn（spawn fn）、静的な atomic RC 選択、境界規則（借用・Ref・可変／nonsendable なトップレベル状態は越えない）、チャネル、実質 race-free
 15. [モジュールシステム](spec/04-execution/15-modules.md) — トップレベルとモジュールスコープ（ユーザーは ambient 定義を作れない・トップレベル変数・言語アイテムは import 不要）、import、export、part、パッケージ、extern
 16. [メタプログラミング](spec/04-execution/16-metaprogramming.md) — `@[...]` 組み込みディレクティブ、ユーザー定義メタプログラミング（方針転換中）
 17. [パッケージ](spec/04-execution/17-packages.md) — マニフェスト（`Plew.toml`）、依存（git/path・桁数バージョン）、依存解決（最新互換・複数版共存・phantom 禁止）、ロックファイル、ソース配布＋消費側ビルド、ネイティブ依存（C/Rust/pkg-config 祝福）
