@@ -6,7 +6,7 @@ Plew の値の受け渡し ── 代入・引数渡し・構造体への埋め�
 
 > **CoW（copy-on-write）**：論理コピーですが、コンパイラ／ランタイムは実コピーを**遅延**します。共有中は同じ内部バッファを指し、いずれかを**変更した瞬間**にだけ複製します。だから読み取り共有は無料で、`Array`／`String`／`Dictionary` のような大きい値も安価に渡せます（「全代入が即コピー＝遅い」は誤解）。観測意味論は常に「独立」で、CoW は観測できない最適化です。
 
-ランタイムは **ARC（参照カウント）** でメモリを管理します。決定的に破棄されるので [`deinit`](#deinit) による資源解放が使えます。循環参照だけは参照カウントで回収できないため [`WeakRef`](#ref--weakref共有可変) で断ち切ります。
+ランタイムは **ARC（自動参照カウント）** でメモリを管理します。決定的に破棄されるので [`deinit`](#deinit) による資源解放が使えます。通常の単一スレッド値は軽量な非 atomic カウントを使い、`spawn` を介して複数スレッドに共有され得る値だけは、whole-program 解析により allocation 時点から atomic カウントを使います。この違いはコンパイラ内部の実装方式で、型名や構文には現れません（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md#参照カウント方式の静的選択)）。循環参照だけは参照カウントで回収できないため [`WeakRef`](#ref--weakref共有可変) で断ち切ります。
 
 ## 再帰する値型（finite・間接化は隠れたコスト）
 
@@ -138,6 +138,8 @@ struct Session {
 通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。generic 型の sendability は型引数ごとに決まり、例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。明示的な `nonsendable struct` は、フィールドがすべて sendable でも sendability の導出を禁止します。
 
 nonsendable 値はスレッド境界（`spawn`）を越えられません。単一スレッド（`async` を含む）では sendable 値と全く同じに扱えます。関数値の明示的な sendability は [無名関数（クロージャ）](04-functions.md#sendable-クロージャ)を、境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
+
+**sendability と参照カウント方式は別軸**です。`sendable` は値の内容を別スレッドから扱ってもデータ競合しないことを表し、atomic な参照カウントは共有された値の寿命管理だけを安全にします。したがって `Ref` を atomic カウントで保持しても、その referent の共有可変性は消えず nonsendable のままです。逆に、深く sendable な不変値や CoW 値は、共有され得る allocation の参照カウントだけを atomic にすれば、実データをコピーせずスレッド間で安全に共有できます。
 
 ## Ref / WeakRef（共有可変）
 

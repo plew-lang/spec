@@ -1,6 +1,6 @@
 # 非同期処理とメモリ管理
 
-Plew は JavaScript と同様の**シングルプロセス・シングルスレッド + イベントループ**を基盤とします。重い処理を別スレッドで動かしたいときだけ `spawn` でスレッドを立てます。メモリは **ARC（参照カウント）** で管理し、破棄は決定的（[`deinit`](../01-basics/03-values.md#deinit)）、循環は [`WeakRef`](../01-basics/03-values.md#ref--weakref共有可変) で断ち切ります。
+Plew は JavaScript と同様の**シングルプロセス・シングルスレッド + イベントループ**を基盤とします。重い処理を別スレッドで動かしたいときだけ `spawn` でスレッドを立てます。メモリは **ARC（自動参照カウント）** で管理し、破棄は決定的（[`deinit`](../01-basics/03-values.md#deinit)）、循環は [`WeakRef`](../01-basics/03-values.md#ref--weakref共有可変) で断ち切ります。参照カウントの更新は通常は非 atomic で、複数スレッドから共有され得る allocation だけをコンパイラが atomic にします。
 
 > **用語**：本書は、コピー可否を **`unique`／コピー可能**、スレッド間の移送可否を **`sendable`／`nonsendable`** と表します。`sendable`／`nonsendable` はキーワードであり、型・クロージャ・generic 境界に現れます（→ [値・変数・所有権](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
@@ -41,9 +41,33 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべ
 
 ## メモリ管理（ARC）
 
-- **ARC（参照カウント）で管理**：スコープを抜けて最後の所有者／`Ref` が消えると**即座に**解放され、`deinit` が走る（決定的破棄＝ファイル・ソケット等の資源解放に使える）。ただし**`panic` 時は abort で巻き戻さないので `deinit` は走らない**（資源は OS が回収・[制御構造 § panic と発散](../03-expressions/11-control-flow.md#panic-と発散) 参照）。決定的破棄が保証されるのは正常終了パスのみ。
+- **ARC（自動参照カウント）で管理**：スコープを抜けて最後の所有者／`Ref` が消えると**即座に**解放され、`deinit` が走る（決定的破棄＝ファイル・ソケット等の資源解放に使える）。ただし**`panic` 時は abort で巻き戻さないので `deinit` は走らない**（資源は OS が回収・[制御構造 § panic と発散](../03-expressions/11-control-flow.md#panic-と発散) 参照）。決定的破棄が保証されるのは正常終了パスのみ。
 - **循環は `WeakRef` で**：参照カウントは循環を回収しないので、親子の逆リンク等は `WeakRef` で断ち切る。**循環が生じ得るのは `Ref` グラフだけ**（値世界＝`Array`/`String`/`Dictionary`・[自動箱化された再帰値型](../02-type-system/05-structs-enums.md#再帰的な値型)は構造上つねに木／DAG）なので、純粋 ARC は値世界を取りこぼさない。
   > **将来 additive：循環の自動回収。** `Ref` グラフは小さく隔離され（trace 対象は `Ref` ボックス＋`mut val` 参照キャプチャしたクロージャだけ）、しかも **`Ref` は非 atomic かつ nonsendable**（spawn を越えない＝per-thread）・**単一イベントループ**（ターン間が天然のセーフポイント）・フルマネージドなので、ARC の上に **`Ref` グラフ限定のサイクルコレクタ**（Bacon–Rajan の trial deletion・CPython/PHP で実証）を **per-thread・idle 実行**で非破壊に足せる。**ゴミ循環を検出したときの挙動**は、(1) retain path 付きで **loud に報告**（dedup・診断フック経由・**全ビルド共通＝release 含む**＝`assert`/overflow panic と同じく「意味論を変えるビルドを持たない」原則の一貫）、(2) **メモリを回収**、(3) **循環メンバの `deinit` は走らせない**。`deinit` の決定的契約は正常路（スコープ離脱・`return`・`try`/`Result` 伝播）のみで保証し、`panic`（abort）と「リークした循環」はともに契約外の脱出で deinit を飛ばす（[panic と発散](../03-expressions/11-control-flow.md#panic-と発散) と対称）。**deinit の有無で挙動を分けない**ので「構造体に `deinit` を足したら循環がリークし始める」崖は生じず、循環メンバの deinit が予期しない時刻に走る驚きも生じない（走らないだけ）。重大度は値の嘘ではない（資源の無駄＋deinit skip）ので panic でなくログ。手動 `WeakRef` は「正しさのため必須」から「決定性・性能の opt-in」へ格下げされ、`Ref[File]` 等を意図せず循環に閉じ込めた場合はメモリは回収され fd は閉じず loud に報告される（直し方は `WeakRef` で輪を切る→正常路で deinit が走る）。実装順は reporter 先行→回収追加（どちらも非破壊）。
+
+### 参照カウント方式の静的選択
+
+参照カウントの atomic 性はユーザー向けの型修飾ではなく、コンパイラ内部の所有方式です。概念上は同じ `T` に対して、thread-confined な `RC[T]` と、複数スレッドから寿命を共有できる `AtomicRC[T]` を使い分けます。
+
+- `spawn` へ到達しないと証明された allocation は、軽量な**非 atomic カウント**で作る。
+- 親スレッドと spawn 側の双方に alias が残り得る allocation は、最初から**atomic カウント**で作る。
+- `unique` 値と、その値だけが所有する参照グラフを別スレッドへ完全に `move` する場合は、同時に複数スレッドからカウントを触らないため**非 atomic のまま移送**できる。
+
+判定は明示された `spawn`/チャネル境界を根とする whole-program の may-analysis です。ローカル変数、フィールド、クロージャ、関数の引数/戻り値、generic、trait の witness、`any P` への注入と取り出しを通して共有制約を allocation まで逆伝播します。条件分岐の一経路だけでも共有され得るなら、その allocation は最初から atomic です。
+
+```plew
+val data = loadData()
+
+if shouldParallelize {
+    spawn { process(data: data) }
+}
+```
+
+この `data` は実行時に `shouldParallelize == false` となる場合も含め、`loadData()` 内の対応する allocation から atomic カウントで作られます。同じ生成関数が thread-confined な経路と共有経路の両方から使われる場合、コンパイラは必要な呼び出し文脈だけを内部的に specialized code として生成できます。
+
+Plew は依存パッケージを含めてソースから whole-program コンパイルし、モジュール/パッケージ単位の独立したバイナリ成果物を ABI として接続しません。ビルドキャッシュはこの解析結果を依存情報に含めます。共有制約が呼び出しグラフを遡って変化した場合は依存する caller も再解析・再生成されますが、これはビルド上の挙動であり、ソース上の型や観測意味論は変わりません。
+
+**spawn 境界での動的昇格は行いません。** 既存 alias を持つ値を実行時に非 atomic から atomic へ変えるには、到達グラフの走査、循環処理、既存の retain/release による mode 判定が必要になり、性能目的の spawn にデータサイズ依存の起動コストを持ち込みます。allocation 時点で静的に方式を決めることで、spawn 時のグラフコピー/昇格と、各 retain/release の mode 分岐を避けます。
 - 値意味論なので、共有された可変状態は `Ref` 経由のみ生まれる（→ [値・変数・所有権](../01-basics/03-values.md)）。
 
 ## 境界を越えるもの（move / copy / Ref / 借用）
@@ -52,11 +76,11 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべ
 
 | 渡すもの | async（単一スレッド） | spawn（実スレッド） |
 | --- | --- | --- |
-| 値（コピー可能） | ○ コピー（CoW＝遅延・バッファ共有） | ○ コピー（**境界で実体化＝eager**） |
+| 値（コピー可能） | ○ コピー（CoW＝遅延・バッファ共有） | ○ 論理コピー（CoW バッファは atomic カウントで物理共有可） |
 | `unique` 値 | ○ `move` | ○ `move`（所有を移す） |
 | `Ref[T]` | ○（共有・メモリ安全） | ✗（共有可変＋非 atomic 参照カウント＝競合） |
 | `fn(...)` | ○ | ✗（sendable 保証なし） |
-| `sendable fn(...)` | ○ | ○（キャプチャ環境も境界で実体化） |
+| `sendable fn(...)` | ○ | ○（キャプチャ環境も静的に RC 方式を選択） |
 | 借用 `borrow`/`inout` | ✗ | ✗ |
 
 畳むと **2 つの規則**：
@@ -65,15 +89,15 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべ
   - 帰結：`Promise.all([f(x: move a), f(x: move a)])` は **2 度目の `move a` が use-after-move でエラー**になり、並行な可変アクセスの footgun が単純な move 追跡で弾ける（借用ライフタイム追跡は不要）。
 - **`Ref` は async は越えられるが spawn は越えられない**。async は単一スレッドなので共有してもメモリ安全（ただし await を跨ぐ interleave は JS 同様の**論理ハザード**＝プログラマ責任）。spawn は実スレッドで、`Ref` の共有は **データ競合＋非 atomic な参照カウント破壊**になるため不可。
 
-### CoW 値は spawn 境界で実体化する（eager copy）
+### CoW 値は論理コピーのまま共有できる
 
-`Array`/`String`/`Dictionary` のような **CoW 値型は内部バッファを参照カウントで共有**します（`Ref` を含まない sendable 型なので、spawn を越えられます）。ただしバッファの参照カウントは `Ref` と同じく**非 atomic**なので、もし送信側と受信側スレッドが同じバッファを共有したまま走ると、`Ref` で禁じたのと**まったく同じ競合**（バッファの count を 2 スレッドが同時に触る）が起きます。
+`Array`/`String`/`Dictionary` のような **CoW 値型は内部バッファを参照カウントで共有**します。これらは `Ref` を含まない sendable 型なので spawn を越えられ、値意味論上は送信側と受信側に独立したコピーが渡ります。ただし、読み取り中の物理バッファを境界でディープコピーする必要はありません。
 
-これを防ぐため、**コピー可能な値が spawn 境界を越えるときは CoW の遅延を打ち切り、その瞬間にバッファを実体化（ディープコピー）します**。送信側と受信側はそれぞれ独立したバッファ＝独立した参照カウントを持ち、スレッド間でバッファを一切共有しません。
+コンパイラは spawn へ共有され得るバッファを allocation 時点から atomic カウントで作ります。spawn は子スレッドを開始する前に論理コピーの retain を完了し、その後は両スレッドが同じ不変バッファを安全に参照できます。どちらかが値を変更すると、通常の CoW と同じく独立バッファを作ってから書き込むため、観測意味論は常に独立コピーです。
 
-- これは spawn だけの規則です。**async（単一スレッド）では CoW は通常どおり遅延**し、バッファ共有はメモリ安全なので実体化しません（上表の async 列）。
-- 設計上 spawn は**稀で重い操作**（実スレッド起動）なので、境界での実体化コストは相対的に小さく、ARC を全面 atomic 化する（＝単一スレッドコードまで重くする）案より Plew の「軽量 ARC・`Ref` は非 atomic」の地金に一貫します。
-- 帰結：spawn へ大きな `Array`/`String` を渡すと、その時点で実コピーが走る（読み取り共有だけのつもりでも遅延されない）。共有したい大きな不変データは、コピーを避けるためにチャネルや `Ref`（async 内）等とは別の設計判断が要る場合がある（コアライブラリで thread-safe 共有型を additive に足す余地 → [並行安全性](#並行安全性--実質-race-free)）。
+- spawn 起動時に到達グラフのコピーや動的昇格は行いません。大きな不変データを渡しても、境界コストはデータサイズに比例しません。
+- spawn され得る一経路があるだけでも、その allocation のカウント操作は生成時から atomic になります。実行時にその経路を通らなかった場合も同じです。
+- sendability は別途構造的に検査します。atomic カウントは CoW バッファの寿命を安全にするだけで、`Ref` のような共有可変値を sendable にはしません。
 
 ## spawn — スレッドの起動
 
@@ -90,6 +114,25 @@ spawn { background() }                        // 束縛しなければ detached
 - **`unique` をスレッドへ渡すには `spawn fn`**（下記）の `move` 引数を使う。
 - **戻りはハンドル構造体 `JoinHandle[T]`**（宣言側は `struct JoinHandle[sendable T]`）：`join() -> Promise[T]` を持つ（名前はその役割＝「join するためのハンドル」に由来。スレッドそのものを走らせるのは `spawn` で、この値はそれへのハンドル。Rust の `JoinHandle` と同名）。spawn ブロックが `give`/`return` する `T` もスレッド境界を越えるため sendable 必須。`await handle.join()` で結果。**ランタイムは全スレッド完了まで生存**してから終了する（Go の「main 終了で goroutine kill」footgun を避ける）。
 - **`spawn` 内 `panic` はプロセス全体を停止**する（panic=abort・スレッド単位の unwind/catch は無い）。スレッド単位で扱いたい失敗は `spawn fn … -> Result[T, E]` のように **`Result` を自分で返す**＝そのとき `join()` は `Promise[Result[T, E]]` を返す（T がそうだから）。**`join()` が暗黙に `Result` で包むことはありません** ── Rust の `JoinHandle::join() -> Result<T, _>` は panic を捕捉して `Err` 化するが、Plew は panic がプロセスを落とすので捕捉対象が無く、`Promise[T]` を正直にそのまま返す（hidden meaning を作らない）。
+
+### spawn からのトップレベルアクセス
+
+トップレベル `val`/`mut val` と `assoc val` は、プロセスの root event loop に属します。spawn ごとの複製・再初期化は行わず、spawn 本体から直接にも名前付き関数経由にもアクセスできません。
+
+```plew
+val config = loadConfig()
+
+fn currentLimit() -> I64 {
+    return config.limit
+}
+
+spawn {
+    print(currentLimit())
+    // エラー：currentLimit → config と root-isolated な値へ到達する
+}
+```
+
+禁止されるのはトップレベル**値への到達**であって、名前付き関数そのものではありません。トップレベル/`assoc` 値へ到達せず、引数とローカル値だけで完結する関数は spawn から呼べます。コンパイラは spawn を根として呼び出しグラフを推移検査し、違反時は呼び出し位置から禁止された値までの経路を示します。これにより、名前付き関数を挟んで sendability 検査を回避することはできません。
 
 ### spawn fn — 引数で値を渡してスレッド起動
 
@@ -128,6 +171,6 @@ val report = await handle.join()
 
 Plew は次を保証します：
 
-- **スレッド間に共有可変状態が存在しない**：spawn は値の送信のみ（借用・`Ref` は越えない）。**CoW 値も境界で実体化**され（[上記](#cow-値は-spawn-境界で実体化するeager-copy)）スレッド間でバッファを共有しないので、`Ref` も CoW バッファも含めて**非 atomic 参照カウントが 2 スレッドから触られることがない**。よって**データ競合が原理的に起きず、UB も無い**。`Mutex` / `sync val` も不要。
+- **スレッド間に共有可変状態が存在しない**：spawn は sendable な値の論理コピーまたは unique な所有移動だけを受け取り、借用・`Ref` は越えません。トップレベル/`assoc` 値にも[直接・推移とも到達できません](#spawn-からのトップレベルアクセス)。CoW の物理バッファなど、sendable な不変ストレージはスレッド間で共有できますが、その allocation は[静的に atomic カウントを選ぶ](#参照カウント方式の静的選択)ため寿命管理も競合しません。よって**データ競合が原理的に起きず、UB も無い**。`Mutex` / `sync val` も不要。
 - **唯一の注意は async の interleave**：単一スレッドで 1 つの `Ref` を複数の async タスクが触ると、await を跨いで状態が割り込まれ得る（**メモリ安全だが論理ハザード**＝JS の共有オブジェクトと同じ・プログラマ責任）。
 - どうしてもスレッド間で可変共有したい稀なケースは、atomic 参照カウントの thread-safe 共有型（Rust の `Arc`/`Mutex` 相当）を **additive** に後付けする想定。大半はチャネルで足りる。
