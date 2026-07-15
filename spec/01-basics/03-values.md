@@ -6,7 +6,7 @@ Plew の値の受け渡し ── 代入・引数渡し・構造体への埋め�
 
 > **CoW（copy-on-write）**：論理コピーですが、コンパイラ／ランタイムは実コピーを**遅延**します。共有中は同じ内部バッファを指し、いずれかを**変更した瞬間**にだけ複製します。だから読み取り共有は無料で、`Array`／`String`／`Dictionary` のような大きい値も安価に渡せます（「全代入が即コピー＝遅い」は誤解）。観測意味論は常に「独立」で、CoW は観測できない最適化です。
 
-ランタイムは **ARC（自動参照カウント）** でメモリを管理します。決定的に破棄されるので [`deinit`](#deinit) による資源解放が使えます。通常の単一スレッド値は軽量な非 atomic カウントを使い、`spawn` を介して複数スレッドに共有され得る値だけは、whole-program 解析により allocation 時点から atomic カウントを使います。この違いはコンパイラ内部の実装方式で、型名や構文には現れません（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md#参照カウント方式の静的選択)）。循環参照だけは参照カウントで回収できないため [`WeakRef`](#ref--weakref共有可変) で断ち切ります。
+ランタイムは **ARC（自動参照カウント）** でメモリを管理します。決定的に破棄されるので [`deinit`](#deinit) による資源解放が使えます。通常の単一スレッド値は軽量な非 atomic カウントを使い、`spawn`・チャネルを介して複数スレッドに共有され得る値だけは、whole-program 解析により allocation 時点から atomic カウントを使います。この違いはコンパイラ内部の実装方式で、型名や構文には現れません（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md#参照カウント方式の静的選択)）。循環参照だけは参照カウントで回収できないため [`WeakRef`](#ref--weakref共有可変) で断ち切ります。
 
 ## 再帰する値型（finite・間接化は隠れたコスト）
 
@@ -114,10 +114,11 @@ impl File {
 
 ## sendable / nonsendable（スレッド間の移送可能性）
 
-`sendable` は、値を別スレッドへ安全にコピーまたは move できる性質です。`nonsendable` はその否定で、[`Ref`](#ref--weakref共有可変) のようにスレッド境界を越えられない根本型を宣言します。ユーザー定義型も、フィールドだけからは分からないスレッド束縛を表すために明示できます。
+`sendable` は、値を別スレッドへ安全にコピーまたは move できる性質です。`nonsendable` はその否定で、[`Ref` / `WeakRef`](#ref--weakref共有可変) のようにスレッド境界を越えられない根本型を宣言します。ユーザー定義型も、フィールドだけからは分からないスレッド束縛を表すために明示できます。
 
 ```plew
 nonsendable struct Ref[T] { /* 組み込み表現 */ }
+nonsendable struct WeakRef[T] { /* 組み込み表現 */ }
 
 nonsendable struct UiContext {
     val rawHandle: U64
@@ -135,9 +136,9 @@ struct Session {
 
 これは [`unique`](#uniqueコピー不可型) と意図的に非対称です。`unique` はコピー可否と呼び出し規則を日常的に変える肯定的な所有権モードなので、unique フィールドを持つ外側にも `unique` の明示を要求します。一方、nonsendable の伝播は spawn 可能性を狭めるだけで、通常の単一スレッドコードの意味を変えません。日常コードへ不要な宣言を広げないため、外側の明示は要求しません。
 
-通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。generic 型の sendability は型引数ごとに決まり、例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。明示的な `nonsendable struct` は、フィールドがすべて sendable でも sendability の導出を禁止します。
+通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。generic 型では、**実際にフィールド/payloadとして所有する型引数**から構造的に導出します。例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。表現に現れない phantom 型引数だけでは外側の sendability は変わりません。明示的な `nonsendable struct` は、フィールドがすべて sendable でも sendability の導出を禁止します。
 
-nonsendable 値はスレッド境界（`spawn`）を越えられません。単一スレッド（`async` を含む）では sendable 値と全く同じに扱えます。関数値の明示的な sendability は [無名関数（クロージャ）](04-functions.md#sendable-クロージャ)を、境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
+nonsendable 値は実スレッド境界（`spawn`・スレッド間チャネル）を越えられません。単一スレッド（`async` を含む）では sendable 値と全く同じに扱えます。関数値の明示的な sendability は [無名関数（クロージャ）](04-functions.md#sendable-クロージャ)を、境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
 
 **sendability と参照カウント方式は別軸**です。`sendable` は値の内容を別スレッドから扱ってもデータ競合しないことを表し、atomic な参照カウントは共有された値の寿命管理だけを安全にします。したがって `Ref` を atomic カウントで保持しても、その referent の共有可変性は消えず nonsendable のままです。逆に、深く sendable な不変値や CoW 値は、共有され得る allocation の参照カウントだけを atomic にすれば、実データをコピーせずスレッド間で安全に共有できます。
 

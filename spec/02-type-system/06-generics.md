@@ -23,7 +23,7 @@ fn process[T](container: Container[T]) where T: Format {
 - **`[allowUnique T]`**：`unique` 型も admit する（widen）。`T` をコピーできなくなるので本体は借用／move で扱う。**v1 では未実装の将来機能** ── コア型（`Optional`/`Array`/`Promise`/`JoinHandle` 等）も含め `allowUnique` を入れずコピー可能な型に限定し、`unique` を generic に入れるのは常に [`Ref`](../01-basics/03-values.md#ref--weakref共有可変) 包み（`Optional[Ref[P]]`）。
 - **`[sendable T]`**：`T` を sendable 型に限定する（narrow）＝`spawn` する generic やスレッド間チャネルへ送る generic で、移送可能性を明示的に要求する（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)）。`spawn` を使わない大半のコードでは不要。
 
-非対称（`allowUnique`＝admit／`sendable`＝restrict）は「**既定＝common case・逸脱だけ注釈**」の帰結です（`unique` は generics で稀なので既定除外、nonsendable は日常的な単一スレッドコードで許容）。**条件付き unique**：`allowUnique` なコンテナが `T` を値で所有すると、`T` が `unique` のときコンテナ自身も `unique` になります（**自動導出・`reunique` 等の宣言は不要**。`unique` 性は型引数から見えるので silent でない）。**条件付き sendability**：型引数をフィールドに持つ generic 型は、実際の型引数が sendable なら sendable、nonsendable なら自動的に nonsendable になります。
+非対称（`allowUnique`＝admit／`sendable`＝restrict）は「**既定＝common case・逸脱だけ注釈**」の帰結です（`unique` は generics で稀なので既定除外、nonsendable は日常的な単一スレッドコードで許容）。**条件付き unique**：`allowUnique` なコンテナが `T` を値で所有すると、`T` が `unique` のときコンテナ自身も `unique` になります（**自動導出・`reunique` 等の宣言は不要**。`unique` 性は型引数から見えるので silent でない）。**条件付き sendability**：型引数をフィールド/payloadとして所有する generic 型は、実際の型引数が sendable なら sendable、nonsendable なら自動的に nonsendable になります。表現に現れない phantom 型引数はこの導出に影響しません。
 
 ## impl の型パラメータ
 

@@ -49,11 +49,13 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型はすべ
 
 参照カウントの atomic 性はユーザー向けの型修飾ではなく、コンパイラ内部の所有方式です。概念上は同じ `T` に対して、thread-confined な `RC[T]` と、複数スレッドから寿命を共有できる `AtomicRC[T]` を使い分けます。
 
-- `spawn` へ到達しないと証明された allocation は、軽量な**非 atomic カウント**で作る。
-- 親スレッドと spawn 側の双方に alias が残り得る allocation は、最初から**atomic カウント**で作る。
+- 実スレッド境界（`spawn`・チャネル）へ到達しないと証明された allocation は、軽量な**非 atomic カウント**で作る。
+- 境界の両側に alias が残り得る allocation は、最初から**atomic カウント**で作る。
 - `unique` 値と、その値だけが所有する参照グラフを別スレッドへ完全に `move` する場合は、同時に複数スレッドからカウントを触らないため**非 atomic のまま移送**できる。
 
 判定は明示された `spawn`/チャネル境界を根とする whole-program の may-analysis です。ローカル変数、フィールド、クロージャ、関数の引数/戻り値、generic、trait の witness、`any P` への注入と取り出しを通して共有制約を allocation まで逆伝播します。条件分岐の一経路だけでも共有され得るなら、その allocation は最初から atomic です。
+
+同じ値スロットや retain/release 点へ atomic と非 atomic の両 allocation が合流し得る場合は、その合流へ到達する allocation をすべて atomic とします。これにより、各 retain/release 点の方式は静的に一意となり、実行時の mode tag や mode 分岐を要しません。呼び出し文脈の specialization はこの同質性を保つための最適化であり、動的な合流を未判定のまま残す手段ではありません。
 
 ```plew
 val data = loadData()
@@ -76,9 +78,10 @@ Plew は依存パッケージを含めてソースから whole-program コンパ
 
 | 渡すもの | async（単一スレッド） | spawn（実スレッド） |
 | --- | --- | --- |
-| 値（コピー可能） | ○ コピー（CoW＝遅延・バッファ共有） | ○ 論理コピー（CoW バッファは atomic カウントで物理共有可） |
-| `unique` 値 | ○ `move` | ○ `move`（所有を移す） |
-| `Ref[T]` | ○（共有・メモリ安全） | ✗（共有可変＋非 atomic 参照カウント＝競合） |
+| sendable な値（コピー可能） | ○ コピー（CoW＝遅延・バッファ共有） | ○ 論理コピー（CoW バッファは atomic カウントで物理共有可） |
+| sendable な `unique` 値 | ○ `move` | ○ `move`（所有を移す） |
+| nonsendable な値 | ○ | ✗ |
+| `Ref[T]` / `WeakRef[T]` | ○（共有・メモリ安全） | ✗（per-thread の共有可変グラフへ到達するため） |
 | `fn(...)` | ○ | ✗（sendable 保証なし） |
 | `sendable fn(...)` | ○ | ○（キャプチャ環境も静的に RC 方式を選択） |
 | 借用 `borrow`/`inout` | ✗ | ✗ |
@@ -132,7 +135,18 @@ spawn {
 }
 ```
 
-禁止されるのはトップレベル**値への到達**であって、名前付き関数そのものではありません。トップレベル/`assoc` 値へ到達せず、引数とローカル値だけで完結する関数は spawn から呼べます。コンパイラは spawn を根として呼び出しグラフを推移検査し、違反時は呼び出し位置から禁止された値までの経路を示します。これにより、名前付き関数を挟んで sendability 検査を回避することはできません。
+禁止されるのはトップレベル**値への到達**であって、名前付き関数そのものではありません。トップレベル/`assoc` 値へ到達せず、引数とローカル値だけで完結する関数は spawn から呼べます。トップレベル値を使いたい場合は、root 側でローカルへ値コピーしてから境界へ渡します。
+
+```plew
+fn startWork() {
+    val localConfig = config
+    spawn { use(config: localConfig) } // OK：境界を越えるのはローカルのスナップショット
+}
+```
+
+このコピーが CoW allocation を共有するなら、その allocation へ atomic 制約が逆伝播します。`spawn { use(config: config) }` のようにトップレベル値を本体から直接読む形はエラーです。
+
+コンパイラは spawn を根として**実行依存グラフ**を推移検査し、違反時は呼び出し位置から禁止された値までの経路を示します。実行依存には直接/間接呼び出しだけでなく、動的な trait witness、operator、factory、デフォルト式、フィールド初期化子、`deinit`/drop glue など、そのコードから暗黙に実行され得るユーザーコードを含みます。したがって sendable な `unique` 値でも、別スレッドで走り得る `deinit` が root-isolated 値へ到達するなら境界を越えられません。これにより、名前付き関数や暗黙実行を挟んで検査を回避することはできません。
 
 ### spawn fn — 引数で値を渡してスレッド起動
 
@@ -157,20 +171,20 @@ val report = await handle.join()
 - 通常の `fn(...)` は sendable 保証を持たず、スレッドへ送る関数値は宣言地点で `sendable fn(...)` と明示する。`sendable fn` から `fn` への保証消去だけ暗黙に許す（→ [関数](../01-basics/04-functions.md#sendable-クロージャ)）。
 - spawn のキャプチャ／チャネルで送る値は **sendable であること**。違反は**そのキャプチャ／送信地点でコンパイルエラー**（nonsendable 宣言または関数フィールドへの経路を示す）。
 - ジェネリックで spawn するときは `[sendable T]` で T の sendability を明示的に要求する（→ [ジェネリクス](../02-type-system/06-generics.md)）。
-- async（単一スレッド）では nonsendable 値や通常の `fn` も自由＝この制約は **spawn 境界だけ**に効く。
+- async（単一スレッド）では nonsendable 値や通常の `fn` も自由＝この制約は **実スレッド境界（spawn・チャネル）だけ**に効く。
 
 ## チャネル
 
 スレッド間で値を送るにはチャネルを使います（「共有」ではなく「送信」＝*share memory by communicating*）。**具体的な型・API はコアライブラリ送り**ですが、モデルは確定しています：
 
 - チャネルは**スレッド安全なプリミティブ**で、概念上 `struct Sender[sendable T]` / `struct Receiver[sendable T]` と宣言する。ハンドル自体も sendable（`Ref` と違い内部が atomic なので spawn を越えられる）。
-- **送る値は sendable であること**（move/copy で渡る・`Ref` や通常の `fn` は送れない）。これで送信経由でもスレッド間に共有可変が生まれず race-free を保つ。
+- **v1 で送る値はコピー可能かつ sendable であること**（論理コピーで渡る・`unique`、`Ref`、通常の `fn` は送れない）。core generic はまだ `allowUnique` を持たないため、チャネルでの unique move は将来 additive とする。これで送信経由でもスレッド間に共有可変が生まれず race-free を保つ。
 - 方針は**複数 Sender**。所有権で「Receiver は単一所有」を強制はしない（複数箇所が持て、`receive()` も複数回呼べる）。`receive() -> Result[T, ChannelClosed]` 方向。マルチコンシューマの意味論は core-lib 設計で詰める。
 
 ## 並行安全性 ── 実質 race-free
 
 Plew は次を保証します：
 
-- **スレッド間に共有可変状態が存在しない**：spawn は sendable な値の論理コピーまたは unique な所有移動だけを受け取り、借用・`Ref` は越えません。トップレベル/`assoc` 値にも[直接・推移とも到達できません](#spawn-からのトップレベルアクセス)。CoW の物理バッファなど、sendable な不変ストレージはスレッド間で共有できますが、その allocation は[静的に atomic カウントを選ぶ](#参照カウント方式の静的選択)ため寿命管理も競合しません。よって**データ競合が原理的に起きず、UB も無い**。`Mutex` / `sync val` も不要。
+- **ユーザー可視の通常値として共有可変状態を作れない**：spawn は sendable な値の論理コピーまたは unique な所有移動だけを受け取り、借用・`Ref` は越えません。トップレベル/`assoc` 値にも[直接・推移とも到達できません](#spawn-からのトップレベルアクセス)。CoW の物理バッファなど、sendable な不変ストレージはスレッド間で共有できますが、その allocation は[静的に atomic カウントを選ぶ](#参照カウント方式の静的選択)ため寿命管理も競合しません。atomic refcount とチャネル内部の同期状態はユーザー値として観測・変更できないランタイム機構です。よって**データ競合が原理的に起きず、UB も無い**。`Mutex` / `sync val` も不要。
 - **唯一の注意は async の interleave**：単一スレッドで 1 つの `Ref` を複数の async タスクが触ると、await を跨いで状態が割り込まれ得る（**メモリ安全だが論理ハザード**＝JS の共有オブジェクトと同じ・プログラマ責任）。
 - どうしてもスレッド間で可変共有したい稀なケースは、atomic 参照カウントの thread-safe 共有型（Rust の `Arc`/`Mutex` 相当）を **additive** に後付けする想定。大半はチャネルで足りる。
