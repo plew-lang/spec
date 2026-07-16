@@ -6,12 +6,13 @@
 @[Eq, Hash]  // ディレクティブ（derive・オプション）
 export struct MyStruct[T] where T: SomeTrait {
     pub val field1: String
-    pub(get) val readonlyField: I32  // getter付きpublicフィールド
+    pub val readonlyField: I32  // 公開 read-only フィールド
+    pub(get) mut val internalSetField: I32  // 読み取り公開・書き込みは型内部のみ
     mut val field2: T = defaultValue()  // フィールドの宣言時デフォルト（生成時に省略可）
 }
 ```
 
-`pub` / `pub(get)` / 非公開（修飾なし）のメンバ可視性は本章末の[メンバの可視性](#メンバの可視性)を参照。非公開メンバは型の無名 impl からのみ見えます。
+`pub` / `pub(get)` / 非公開（修飾なし）のメンバ可視性は本章末の[メンバの可視性](#メンバの可視性)を参照。`pub(get)` は `mut val` フィールドの setter だけを内部に閉じる指定です。非公開メンバは型の無名 impl からのみ見えます。
 
 型宣言の修飾子順序は **`export` → `unique` → `nonsendable` → `struct` / `enum`** に固定します。例えば `export unique nonsendable struct UiResource` は合法ですが、同じ意味の修飾子を並べ替えた `nonsendable unique struct` は構文エラーです。修飾子を集合として扱わず、同じ宣言に一つの書き方だけを与えます（意味論は [unique](../01-basics/03-values.md#uniqueコピー不可型) / [sendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
@@ -174,7 +175,7 @@ val a = <Person name="Alice" age=30 />   // 全指定
 val b = <Person name="Bob" />            // age 省略 → 0
 ```
 
-**既定 factory の既定可視性は非公開（not pub）** ── 通常の非公開メンバと同じく、**型の無名 impl からしか呼べません**。memberwise factory は**非公開フィールドも構築引数として晒す**ため、無制限に公開するとカプセル化（`pub`/`pub(get)`）が構築時に破れるからです。外部・同モジュールの他コードからの生成は、型がカスタム factory を明示提供して担います。
+**既定 factory の既定可視性は非公開（not pub）** ── 通常の非公開メンバと同じく、**型の無名 impl からしか呼べません**。memberwise factory は**非公開フィールドも構築引数として晒す**ため、無制限に公開するとフィールド可視性（`pub val` / `pub mut val` / `pub(get) mut val` / 非公開）が構築時に破れるからです。外部・同モジュールの他コードからの生成は、型がカスタム factory を明示提供して担います。
 
 公開したいときは**`pub impl` 内に裸の `factory` を 1 行**書きます（`@[...]` ディレクティブではなく素の構文 ── 可視性制御に祝福ディレクティブを作らないため）。可視性は他のメンバと同じく [`impl` ブロック単位](#メンバの可視性)で、`factory` を `pub impl` に置けば公開・`impl` に置けば非公開（既定のまま）です。
 
@@ -256,7 +257,7 @@ factory の戻り型は既定で暗黙の `Self` です（fallible な場合の�
 
 ```plew
 struct Temperature {
-    pub(get) val celsius: F64
+    pub val celsius: F64
 }
 
 impl Temperature {
@@ -327,9 +328,11 @@ val n: Optional[I32] = <.None />            // ペイロードなしバリアン
 可視性の付け方は**メンバの種類で 2 通り**です：
 
 - **フィールドはフィールド単位**（`struct` 本体に書く）。`pub(get)` の「読み公開・書き内部のみ」という読み書きの非対称があるので、ブロックには畳めず宣言ごとに付けます。
-  - **`pub val`** — その型を参照できるコードから読み書きできる。
-  - **`pub(get) val`** — 読み取りは公開、書き込みは型の内部のみ（外部からは不変）。
-  - **修飾なし** — **その型の無名 impl の中からのみ**見える（非公開）。
+  - **`pub val`** — 読み取りは公開。`val` なので型の内部からも外部からも再代入できない。
+  - **`pub mut val`** — 読み取りと書き込みが公開。外部コードも、値の束縛が `mut val` ならこのフィールドを書き換えられる。
+  - **`pub(get) mut val`** — 読み取りは公開、書き込みは型の内部のみ（外部からは不変に見える）。
+  - **修飾なし `val` / `mut val`** — **その型の無名 impl の中からのみ**見える（非公開）。
+  - **`pub(get) val` は不可**。`val` はそもそも書き込み不可なので、公開 read-only フィールドは `pub val` と書きます。
 - **メソッド・関連関数・`factory` は `impl` ブロック単位**（→ [メソッドと impl](07-methods-impl.md)）。**メソッド個別の `pub`（`pub fn`）は書けません** ── 可視性は `impl`／`pub impl` に付けます。
   - **`pub impl Type { … }`** — ブロック内のメンバはすべて公開（その型を参照できるコードから呼べる）。
   - **修飾なし `impl Type { … }`** — ブロック内はすべて非公開（その型の**無名 impl の中からのみ**見える）。
@@ -339,8 +342,9 @@ val n: Optional[I32] = <.None />            // ペイロードなしバリアン
 
 ```plew
 struct Account {
-    pub val id: I32             // どこからでも読み書き
-    pub(get) val balance: I32   // 読み取り公開・書き込みは内部のみ
+    pub val id: I32              // どこからでも読める。val なので再代入不可
+    pub mut val nickname: String // どこからでも読み書き
+    pub(get) mut val balance: I32 // 読み取り公開・書き込みは内部のみ
     mut val secretKey: String   // 無名 impl の中だけ
 }
 
@@ -353,7 +357,7 @@ impl Account {                  // 修飾なし → 非公開ヘルパ群
 }
 
 extension Audit {
-    impl Account {              // 拡張 → pub / pub(get) のみ
+    impl Account {              // 拡張 → 公開フィールドのみ
         fn report() -> I32 { return self.balance }  // OK
         // fn leak() -> String { return self.secretKey }  // エラー: 非公開
     }
