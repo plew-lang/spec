@@ -119,7 +119,8 @@ spawn { background() }                        // 束縛しなければ detached
 - **ベアの `spawn { }` のキャプチャはコピー可能かつ sendable な値のみ（暗黙コピー＝スナップショット）**。`borrow`/`inout`・`Ref`・nonsendable 値を触れば**コンパイルエラー**（nonsendable の根へのフィールド経路を示す）。**`unique` のキャプチャもエラー**（ブロックへ move する構文は当面持たない＝additive）。`spawn` 自体が明示的なスレッド境界なので、ブロックに別の `sendable` 修飾は重ねません。
 - **`unique` をスレッドへ渡すには `spawn fn`**（下記）の `move` 引数を使う。
 - **戻りは sendable かつ unique なハンドル `JoinHandle[T]`**（概念上 `unique struct JoinHandle[sendable T]`）。ハンドルは「結果を一度だけ受領または破棄する責任」を所有し、別スレッドへ `move` するとこの責任も移ります。`move fn join() -> Promise[T]` は self を消費し、**呼び出したスレッドのイベントループ**を結果の完了先として登録します。完成した `T` はそのループの `Promise[T]` へ move されるため、コピーや二重 join はできません。
-- **join せずに `JoinHandle` を drop すると detached** になります。drop はハンドルを消費し、**drop が実行されたスレッドのイベントループ**を「結果を破棄する完了先」として登録します。すでに完了していればそのループ上で保持済みの `T` を直ちに破棄し、実行中なら worker はそのまま完走して、生成した `T` を登録済みループへ送りそこで破棄します。join/drop と worker 完了が競合しても atomic な状態遷移により、`T` の move または破棄はちょうど一度だけです。drop 自体は待たずに戻りますが、この破棄継続は完了まで所有側イベントループの pending work として残り、ループは park して通知を待てます。
+- **worker の完了は、spawn 本体が `give`/`return` した時点ではなく、その後 worker 自身のイベントループも drain してスレッドが終了可能になった時点**です。本体が先に `T` を生成した場合、ランタイムの同期された completion cell が `T` を所有したまま worker loop の drain を待ちます。本体が登録したタイマ・タスク・リスナが残る限り `join()` は完了せず、永続リスナなら明示的に解除されるまで待ち続けます。したがって `JoinHandle` は本体の戻り値だけでなく、実スレッドの寿命を join します。
+- **join せずに `JoinHandle` を drop すると detached** になります。drop はハンドルを消費し、**drop が実行されたスレッドのイベントループ**を「結果を破棄する完了先」として登録します。worker がすでに完了していれば completion cell 内の `T` をそのループへ move して破棄し、実行中なら worker の本体とイベントループが完走した後に同じことを行います。join/drop と worker 完了が競合しても同期された atomic な状態遷移により、完了先の登録と `T` の move または破棄はちょうど一度だけです。drop 自体は待たずに戻りますが、この破棄継続は完了まで所有側イベントループの pending work として残り、ループは park して通知を待てます。
 - spawn ブロックが `give`/`return` する `T` はスレッド境界を越えるため sendable 必須です。`join()` が返した `Promise[T]` の全コピーを結果観測前に破棄した場合も暗黙キャンセルはせず、同じイベントループ上で結果だけを破棄します。**ランタイムはハンドルの有無にかかわらず全スレッド完了と登録済み完了先の処理まで生存**してから終了します（Go の「main 終了で goroutine kill」footgun を避ける）。
 - **`spawn` 内 `panic` はプロセス全体を停止**する（panic=abort・スレッド単位の unwind/catch は無い）。スレッド単位で扱いたい失敗は `spawn fn … -> Result[T, E]` のように **`Result` を自分で返す**＝そのとき `join()` は `Promise[Result[T, E]]` を返す（T がそうだから）。**`join()` が暗黙に `Result` で包むことはありません** ── Rust の `JoinHandle::join() -> Result<T, _>` は panic を捕捉して `Err` 化するが、Plew は panic がプロセスを落とすので捕捉対象が無く、`Promise[T]` を正直にそのまま返す（hidden meaning を作らない）。
 
@@ -127,11 +128,12 @@ spawn { background() }                        // 束縛しなければ detached
 
 トップレベル/`assoc` 値はプロセス全体で一度だけ初期化され、spawn ごとの複製・再初期化は行いません。ただし、spawn からの読み取り可否は可変性と sendability で決まります。
 
-- sendable な不変 `val` / `assoc val` は、spawn 本体から直接にも名前付き関数経由にも読み取れる。
+- sendable な不変 `val` / `assoc val` は、コピー可能か unique かを問わず、spawn 本体から直接にも名前付き関数経由にも読み取れる。トップレベル名へのアクセスはキャプチャや境界越しの借用ではなく、プロセス寿命が保証された共有不変ストレージの直接参照として扱う。
+- 不変 unique 値に許されるのは**所有権を消費しない操作だけ**である。通常の不変 `fn` 呼び出しとコピー可能なフィールドのコピーはできるが、値全体の by-value 受け渡し、`move`、`inout fn` / `move fn`、unique フィールドの move-out はできない。グローバルの place が唯一の所有者であり続け、spawn からの読み取りによって所有者は増えない。
 - `mut val` は、読み取りだけでも spawn から到達できない。
 - nonsendable な `val` / `assoc val` は spawn から到達できない。
 
-不変トップレベル/`assoc val` のストレージと、それが不変値として固定的に所有する backing はプロセスと同じ寿命を持つ **immortal allocation** です。immortal な所有辺には寿命管理の retain/release が不要で、spawn から読まれても atomic RC へ昇格しません。CoW 値をローカルへコピーしても immortal backing をそのまま共有でき、ローカル側を変更するときだけ通常どおり新しい backing を作ってから書き込みます。`Ref` の中へ後から格納される値など、可変な内部状態の allocation は immortal へ伝染せず通常どおり管理します。immortal であることを表す sentinel、header、静的 provenance などは観測できない内部方式です。
+不変トップレベル/`assoc val` のストレージと、それが不変値として固定的に所有する backing はプロセスと同じ寿命を持つ **immortal allocation** です。ここで immortal とは「通常実行中に retain/release しない」という意味であり、正常終了時にも決して破棄しないという意味ではありません。すべての spawn スレッドが終了した後、root event loop 上でトップレベル/`assoc val` の所有根を finalization し、unique 値の `deinit` と通常のフィールド破棄を実行します。したがって spawn からの不変 unique 読み取りと終了時破棄は競合しません。immortal な所有辺には寿命管理の retain/release が不要で、spawn から読まれても atomic RC へ昇格しません。CoW 値をローカルへコピーしても immortal backing をそのまま共有でき、ローカル側を変更するときだけ通常どおり新しい backing を作ってから書き込みます。`Ref` の中へ後から格納される値など、可変な内部状態の allocation は immortal へ伝染せず通常どおり管理します。immortal であることを表す sentinel、header、静的 provenance などは観測できない内部方式です。
 
 ```plew
 val config: Config = loadConfig() // Config は sendable

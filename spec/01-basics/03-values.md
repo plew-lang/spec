@@ -88,6 +88,7 @@ unique enum Handle {
 - **束縛は move のみ**：`val f2 = move f`（以後 `f` は使えない）。`val f2 = f`（コピー）は**エラー**です。
 - **アクセスはモード明示必須**：コピー可能と違い bare 不可。`borrow`/`inout`/`move` のいずれかを書く。
 - **`unique`（または unique を推移的に含む型）をフィールドに持つ型は `unique` 明示必須**。書かなければコンパイルエラー（自動伝染させず、フィールド追加時に決定を強制する＝[全フィールド明示](11-control-flow.md)と同じ精神）。**enum も同様**：unique（または unique を推移的に含む型）をバリアントのペイロードに持つ enum は `unique enum` 明示必須。
+- **無名レコードは `unique` を直接にも推移的にも含めない**。外側を `unique` と宣言する場所が無いため、v1 ではそのような無名レコードの形成自体をコンパイルエラーにする。名前付きの `unique struct` を使えばよい。
 - **ジェネリクスには直接渡せない**（型引数はコピー可能な型に限定）。共有・格納したいときは [`Ref`](#ref--weakref共有可変) で包む（`Optional[Ref[File]]` 等 → [ジェネリクス](../02-type-system/06-generics.md)）。
 
 ### deinit
@@ -147,7 +148,7 @@ struct Session {
 
 これは [`unique`](#uniqueコピー不可型) と意図的に非対称です。`unique` はコピー可否と呼び出し規則を日常的に変える肯定的な所有権モードなので、unique フィールドを持つ外側にも `unique` の明示を要求します。一方、nonsendable の伝播は spawn 可能性を狭めるだけで、通常の単一スレッドコードの意味を変えません。日常コードへ不要な宣言を広げないため、外側の明示は要求しません。
 
-通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。**無名レコードも各フィールドから同じ規則で構造的に導出**します。generic 型では、**実際にフィールド/payloadとして所有する型引数**から構造的に導出します。例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。表現に現れない phantom 型引数だけでは外側の sendability は変わりません。[`newtype`](../02-type-system/10-newtype.md#unique-と-sendability-の継承) は underlying の sendability をそのまま自動継承し、明示的な sendability 修飾は書けません。[存在型](../02-type-system/08-traits.md#存在型の-sendability)は無印 `any P` が nonsendable、保証を保持する `any sendable P` が sendable な構成型です。明示的な `nonsendable struct` / `nonsendable enum` は、構成要素がすべて sendable でも型自身の sendability の導出を禁止します。逆向きの `sendable struct` / `sendable enum` 宣言はありません。
+通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。**無名レコードも各フィールドから同じ規則で構造的に導出**します（ただし v1 では、外側の所有権を明示できないため [`unique` を含む無名レコードを形成できません](#uniqueコピー不可型)）。generic 型では、**実際にフィールド/payloadとして所有する型引数**から構造的に導出します。例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。表現に現れない phantom 型引数だけでは外側の sendability は変わりません。[`newtype`](../02-type-system/10-newtype.md#unique-と-sendability-の継承) は underlying の sendability をそのまま自動継承し、明示的な sendability 修飾は書けません。[存在型](../02-type-system/08-traits.md#存在型の-sendability)は無印 `any P` が nonsendable、保証を保持する `any sendable P` が sendable な構成型です。明示的な `nonsendable struct` / `nonsendable enum` は、構成要素がすべて sendable でも型自身の sendability の導出を禁止します。逆向きの `sendable struct` / `sendable enum` 宣言はありません。
 
 nonsendable 値は実スレッド境界（`spawn`・スレッド間チャネル）を越えられません。単一スレッド（`async` を含む）では sendable 値と全く同じに扱えます。関数値の明示的な sendability は [無名関数（クロージャ）](04-functions.md#sendable-クロージャ)を、境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
 

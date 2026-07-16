@@ -14,13 +14,13 @@ val maxRetry: I32 = 3          // トップレベル定数
 mut val requestCount = 0       // トップレベル可変変数
 ```
 
-トップレベル値はプロセス全体で生き、[`spawn`](14-concurrency.md) ごとのコピーや再初期化は行いません。不変 `val` / `assoc val` はプロセス寿命の immortal な値で、型が sendable なら spawn 本体から直接にも名前付き関数経由にも読み取れます。`mut val` と nonsendable な `val` / `assoc val` は root event loop に隔離され、spawn からは読み取りもできません。名前付き関数に `concurrent` 修飾はなく、コンパイラが通常の関数解析で effect summary を作って spawn からの到達を自動判定します（→ [spawn からのトップレベルアクセス](14-concurrency.md#spawn-からのトップレベルアクセス)）。
+トップレベル値はプロセス全体で生き、[`spawn`](14-concurrency.md) ごとのコピーや再初期化は行いません。不変 `val` / `assoc val` はプロセス寿命の immortal な値で、型が sendable なら spawn 本体から直接にも名前付き関数経由にも読み取れます。これは unique 値にも適用されますが、グローバルの唯一の所有権を保ったまま行う非消費アクセスだけに限られます。`mut val` と nonsendable な `val` / `assoc val` は root event loop に隔離され、spawn からは読み取りもできません。名前付き関数に `concurrent` 修飾はなく、コンパイラが通常の関数解析で effect summary を作って spawn からの到達を自動判定します（→ [spawn からのトップレベルアクセス](14-concurrency.md#spawn-からのトップレベルアクセス)）。
 
 ### トップレベル初期化と実行順序
 
 トップレベル `val`/`mut val`・`export val`・[`assoc val`](../02-type-system/07-methods-impl.md)（型の静的値）は、**プログラム起動時に eager に初期化**されます。`main` 本体が動き始める前に、すべて初期化済みであることが保証されます（Swift/Rust のような「初回アクセス時の遅延初期化」ではない ── いつ走るか読めない非直感を持ち込まない）。初期化子は const に限らず**任意の実行時式**を書けます（関数呼び出し・I/O・[JSX 生成](../02-type-system/05-structs-enums.md) など）。
 
-初期化は**プロセス全体で一度だけ**です。後から起動した spawn スレッドは独自のトップレベル状態を持たず、初期化子も再実行しません。sendable な不変値を spawn から読める場合も同じ一個の immortal な値を読み、スレッドごとのコピーは作りません。可変性やsendabilityで変わるのはアクセス可否だけで、初期化回数と保存場所は変わりません。
+初期化は**プロセス全体で一度だけ**です。後から起動した spawn スレッドは独自のトップレベル状態を持たず、初期化子も再実行しません。sendable な不変値を spawn から読める場合も同じ一個の immortal な値を読み、スレッドごとのコピーは作りません。immortal は実行中の retain/release が不要という意味で、正常終了時には root event loop 上で finalization されます。可変性やsendabilityで変わるのはアクセス可否だけで、初期化回数と保存場所は変わりません。
 
 **順序は依存順（force-on-read）**。静的な依存解析は持たず、各トップレベル値を「**memoize されたサンク**」として扱います。値には *未初期化 / 初期化中 / 初期化済み* の状態があり、起動時に全値を force します：
 
@@ -63,7 +63,7 @@ fn main() -> Result[(), AppError] {   // Result を返すと main 内で try が
 - **`async` は任意**：`fn main` と `async fn main` の両方が valid。実行モデルは常にイベントループなので、同期 `main` は await ゼロの特殊ケース（[同期プログラムは無税](#トップレベル-await-と並行初期化)）。
 - **戻り値は `()` か `Result[(), E]`**。`Result` を返すと **`main` 内で [`try`](../03-expressions/13-error-handling.md) が使え**、`Err` のときランタイムが**エラーを表示して非ゼロ終了**します（`Termination` 相当の lang トレイト経由）。明示的な終了コードは標準ライブラリの `Process.exit(code:)`（発散）。
 - **引数・環境は `main` の仮引数では受け取らず、標準ライブラリ経由**で取ります（`import @Std/Process` して `Process.args() -> Array[String]`／`Process.env` 等）。`print`/`Random` と同じく「ambient なプロセス能力を import 越しに明示取得」する形に揃え、出どころを可視に保つ（`main` のシグネチャを単一にし、ランタイムが複数 main 形を魔法認識しなくて済む）。`Process` は lang item ではないので import が要る。
-- **ランタイムの寿命**：`main` が返り、**すべての [`spawn`](14-concurrency.md) スレッドが完了し、join/drop が登録した結果の完了先を処理し、かつ全イベントループが drain した**（保留タスク・タイマ・登録リスナも無い）ときにプロセスは終了します（Node/ブラウザと同じ）。detached も暗黙キャンセルせず完走し、結果の破棄継続は処理されるまで所有側ループの pending work です。よって UI アプリの `main` は「DOM にマウントして return」でよく、イベント待ちでループが生き続けます。CLI は仕事して return → ループ空 → 終了。サーバは listen して return → 接続待ちで生存。
+- **ランタイムの寿命**：worker の完了とは spawn 本体の `give`/`return` だけでなく、worker 自身のイベントループが drain してスレッドが終了したことを指します。`main` が返った後も root loop の通常 work と join/drop の完了先を処理し、detached を含む**すべての worker が完了するまで**生存します。通常 work が静穏になり全 worker が終了したら、root event loop 上でトップレベル/`assoc val` の所有根を finalization します。その破棄（たとえばグローバルな `JoinHandle` の drop）が新たに登録した結果破棄などの process-completion work を処理し、最後に全イベントループが drain した時点でプロセスを終了します。detached は暗黙キャンセルされず、結果の破棄継続は処理されるまで所有側ループの pending work です。よって UI アプリの `main` は「DOM にマウントして return」でよく、イベント待ちでループが生き続けます。CLI は仕事して return → ループ空 → finalization → 終了。サーバは listen して return → 接続待ちで生存。
 - **パッケージは lib 面（`_.pw` の export）を常に持ち、`main` を持つ各ファイルが bin**（実行可能エントリ）＝**1 パッケージ＝1 lib ＋ N bin**（Rust の lib+bin モデル）。公開する bin は manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で列挙し、`plew run @Pkg:Name` で呼びます（→ [ビルド・実行](#ビルド実行)）。ライブラリ（他パッケージや JS から呼ぶ WASM）は bin ゼロ＝export 面だけを晒します。**複数 lib が要るならワークスペースの members**（bin は 1 パッケージ内に複数置ける）。
 
 ### 言語アイテムは常にスコープにある（import 不要）
