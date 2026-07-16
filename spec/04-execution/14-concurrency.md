@@ -33,9 +33,9 @@ async fn main() {
 
 ### unique 結果と `allowUnique`（v1 は不可・将来）
 
-v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型の型引数はすべてコピー可能な型に限定**（`allowUnique` 未導入）。これは型引数の `unique` 制約であって、コンテナ自身のコピー可否や sendability とは別です。`Promise[T]` は単一スレッド内で使うため nonsendable な `T` も許容します。一方、別スレッドから結果を受け取る `JoinHandle` は概念上 **`unique struct JoinHandle[sendable T]`** で、`T` の sendability を要求し、ハンドル自身は sendable です。帰結：
+v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型の型引数はすべてコピー可能な型に限定**（`allowUnique` 未導入）。これは型引数の `unique` 制約であって、コンテナ自身のコピー可否や sendability とは別です。`Promise[T]` は単一スレッド内で使うため nonsendable な `T` も許容します。一方、別スレッドから結果を受け取る `JoinHandle` は概念上 **`unique struct JoinHandle[sendable T]`** で、`T` の sendability を要求し、ハンドル自身は sendable です。ただし v1 では **unique 値の spawn 境界 move 自体を持たない**ため、`JoinHandle` をさらに別スレッドへ move することはできません。帰結：
 
-- async/spawn の**本体は unique な `T` を結果として返せない**（`-> Promise[unique]` / `-> JoinHandle[unique]` 不可）。`spawn` 呼び出し自体が返す外側の `JoinHandle[T]` は unique です。async で unique を持ち回るなら **`Ref` 包み**（`Ref` は async を越えられる）。
+- async/spawn の**本体は unique な `T` を結果として返せない**（`-> Promise[unique]` / `-> JoinHandle[unique]` 不可）。`spawn` 呼び出し自体が呼び出し側に作る外側の `JoinHandle[T]` は unique ですが、そのハンドルを spawn 境界越しに move することも v1 では不可です。async で unique を持ち回るなら **`Ref` 包み**（`Ref` は async を越えられる）。
 - **unique を generic に入れるのは常に `Ref` 包み**（`Optional[Ref[File]]`・`Array[Ref[File]]`）。`Ref` はコピー可能なので通常のコピー可能なコレクションになり、`match`/peek/反復が普通に効く（move-out 専用 API も `take()` も不要）。
 - by-value の unique を generic で扱う（`Optional[unique]`・`Promise[unique]`・`Array[unique]`）には **借用束縛＝ライフタイム**が要り（要素を取り出さず借用で覗く操作のため）、v1 の非 escape 借用では実装できない。**`allowUnique` は将来の additive**（保持系＝Optional/Promise が先・Array/Iterable は escaping borrow 導入後）。それまでは `Ref` 包みで代替。
 
@@ -51,7 +51,7 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型の型引
 
 - 実スレッド境界（`spawn`・チャネル）へ到達しないと証明された allocation は、軽量な**非 atomic カウント**で作る。
 - 境界の両側に alias が残り得る allocation は、最初から**atomic カウント**で作る。
-- `unique` 値と、その値だけが所有する参照グラフを別スレッドへ完全に `move` する場合は、同時に複数スレッドからカウントを触らないため**非 atomic のまま移送**できる。
+- v1 では unique 値の spawn 境界 move は持たない。将来 `allowUnique` と境界 move を追加する場合、親側 alias が残らない完全移送だけは非 atomic のまま移送できる余地がある。
 - 不変トップレベル/`assoc val` が所有する allocation はプロセス寿命の **immortal** とし、非 atomic/atomic のいずれの retain/release も行わない。spawn から読まれても寿命は変わらない。
 
 判定は明示された `spawn`/チャネル境界を根とする whole-program の may-analysis です。ローカル変数、フィールド、クロージャ、関数の引数/戻り値、generic、trait の witness、`any P` への注入と取り出しを通して共有制約を allocation まで逆伝播します。条件分岐の一経路だけでも共有され得るなら、その allocation は最初から atomic です。
@@ -80,18 +80,18 @@ Plew は依存パッケージを含めてソースから whole-program コンパ
 | 渡すもの | async（単一スレッド） | spawn（実スレッド） |
 | --- | --- | --- |
 | sendable な値（コピー可能） | ○ コピー（CoW＝遅延・バッファ共有） | ○ 論理コピー（CoW バッファは atomic カウントで物理共有可） |
-| sendable な `unique` 値 | ○ `move` | ○ `move`（入力として所有を移す。v1 の結果/チャネル payload は不可） |
+| sendable な `unique` 値 | ○ `move` | ✗（v1 は unique の境界 move 自体を持たない） |
 | nonsendable な値 | ○ | ✗ |
 | `Ref[T]` / `WeakRef[T]` | ○（共有・メモリ安全） | ✗（per-thread の共有可変グラフへ到達するため） |
 | `fn(...)` | ○ | ✗（sendable 保証なし） |
 | `sendable fn(...)` | ○ | ○（キャプチャ環境も静的に RC 方式を選択） |
 | `Promise[T]` | ○ | ✗（イベントループに所属し、`T` に関係なく nonsendable） |
-| `JoinHandle[T]`（`T` は sendable） | ○ `move` | ○ `move`（sendable かつ unique） |
+| `JoinHandle[T]`（`T` は sendable） | ○ `move` | ✗（unique handle の境界 move は将来） |
 | 借用 `borrow`/`inout` | ✗ | ✗ |
 
 畳むと **2 つの規則**：
 
-- **借用は同期専用 ── どの境界も越えない**。`async`/`spawn` 関数の引数に `borrow`/`inout` は使えません（指す先のライフタイムが境界をまたぐ複雑さ＝Rust の async 借用問題を避けるため）。越えたいときは **`move`（必要なら戻り値で返す round-trip）・コピー・`Ref`** を使う。
+- **借用は同期専用 ── どの境界も越えない**。`async`/`spawn` 関数の引数に `borrow`/`inout` は使えません（指す先のライフタイムが境界をまたぐ複雑さ＝Rust の async 借用問題を避けるため）。async では **`move`（必要なら戻り値で返す round-trip）・コピー・`Ref`** を使い、spawn では v1 の間 **コピー可能かつ sendable な値の論理コピー**だけを使います。
   - 帰結：`Promise.all([f(x: move a), f(x: move a)])` は **2 度目の `move a` が use-after-move でエラー**になり、並行な可変アクセスの footgun が単純な move 追跡で弾ける（借用ライフタイム追跡は不要）。
 - **`Ref` は async は越えられるが spawn は越えられない**。async は単一スレッドなので共有してもメモリ安全（ただし await を跨ぐ interleave は JS 同様の**論理ハザード**＝プログラマ責任）。spawn は実スレッドで、`Ref` の共有は **データ競合＋非 atomic な参照カウント破壊**になるため不可。
 
@@ -116,9 +116,9 @@ val result = await handle.join()             // join() が unique handle を消�
 spawn { background() }                        // 束縛しなければ detached
 ```
 
-- **ベアの `spawn { }` のキャプチャはコピー可能かつ sendable な値のみ（暗黙コピー＝スナップショット）**。`borrow`/`inout`・`Ref`・nonsendable 値を触れば**コンパイルエラー**（nonsendable の根へのフィールド経路を示す）。**`unique` のキャプチャもエラー**（ブロックへ move する構文は当面持たない＝additive）。`spawn` 自体が明示的なスレッド境界なので、ブロックに別の `sendable` 修飾は重ねません。
-- **`unique` をスレッドへ渡すには `spawn fn`**（下記）の `move` 引数を使う。
-- **戻りは sendable かつ unique なハンドル `JoinHandle[T]`**（概念上 `unique struct JoinHandle[sendable T]`）。ハンドルは「結果を一度だけ受領または破棄する責任」を所有し、別スレッドへ `move` するとこの責任も移ります。`move fn join() -> Promise[T]` は self を消費し、**呼び出したスレッドのイベントループ**を結果の完了先として登録します。完成した `T` はそのループの `Promise[T]` へ move されるため、コピーや二重 join はできません。
+- **ベアの `spawn { }` のキャプチャはコピー可能かつ sendable な値のみ（暗黙コピー＝スナップショット）**。`borrow`/`inout`・`Ref`・nonsendable 値を触れば**コンパイルエラー**（nonsendable の根へのフィールド経路を示す）。**`unique` のキャプチャもエラー**（v1 では spawn 境界を越える move 自体を持たない）。`spawn` 自体が明示的なスレッド境界なので、ブロックに別の `sendable` 修飾は重ねません。
+- **`spawn fn` の引数も v1 ではコピー可能かつ sendable な値のみ**です。`spawn fn` は「キャプチャでなく引数として何をスレッド境界へコピーするか」を明示する構文であり、unique を move する構文ではありません。
+- **戻りは sendable かつ unique なハンドル `JoinHandle[T]`**（概念上 `unique struct JoinHandle[sendable T]`）。ハンドルは「結果を一度だけ受領または破棄する責任」を所有します。`move fn join() -> Promise[T]` は self を消費し、**呼び出したスレッドのイベントループ**を結果の完了先として登録します。完成した `T` はそのループの `Promise[T]` へ move されるため、コピーや二重 join はできません。ハンドル自身は sendable な設計ですが、v1 では unique 値を spawn 境界へ move できないため、作成された `JoinHandle` は作成側スレッドで join/drop します（将来 `allowUnique` と境界 move を導入すれば責任を別スレッドへ移せる）。
 - **worker の完了は、spawn 本体が `give`/`return` した時点ではなく、その後 worker 自身のイベントループも drain してスレッドが終了可能になった時点**です。本体が先に `T` を生成した場合、ランタイムの同期された completion cell が `T` を所有したまま worker loop の drain を待ちます。本体が登録したタイマ・タスク・リスナが残る限り `join()` は完了せず、永続リスナなら明示的に解除されるまで待ち続けます。したがって `JoinHandle` は本体の戻り値だけでなく、実スレッドの寿命を join します。
 - **join せずに `JoinHandle` を drop すると detached** になります。drop はハンドルを消費し、**drop が実行されたスレッドのイベントループ**を「結果を破棄する完了先」として登録します。worker がすでに完了していれば completion cell 内の `T` をそのループへ move して破棄し、実行中なら worker の本体とイベントループが完走した後に同じことを行います。join/drop と worker 完了が競合しても同期された atomic な状態遷移により、完了先の登録と `T` の move または破棄はちょうど一度だけです。drop 自体は待たずに戻りますが、この破棄継続は完了まで所有側イベントループの pending work として残り、ループは park して通知を待てます。
 - spawn ブロックが `give`/`return` する `T` はスレッド境界を越えるため sendable 必須です。`join()` が返した `Promise[T]` の全コピーを結果観測前に破棄した場合も暗黙キャンセルはせず、同じイベントループ上で結果だけを破棄します。**ランタイムはハンドルの有無にかかわらず全スレッド完了と登録済み完了先の処理まで生存**してから終了します（Go の「main 終了で goroutine kill」footgun を避ける）。
@@ -155,22 +155,22 @@ spawn {
 }
 ```
 
-名前付き関数に `concurrent` 修飾は付けません。コンパイラは関数の通常の解析時に effect summary を作り、spawn を根とする**実行依存グラフ**で保存済み summary を推移検査します。実行依存には直接/間接呼び出しだけでなく、動的な trait witness、operator、factory、デフォルト式、フィールド初期化子、`deinit`/drop glue など、そのコードから暗黙に実行され得るユーザーコードを含みます。したがって sendable な `unique` 値でも、別スレッドで走り得る `deinit` が可変／nonsendable なトップレベル状態へ到達するなら境界を越えられません。違反時は spawn の呼び出し位置から禁止された値までの経路を示します。これにより、名前付き関数や暗黙実行を挟んで検査を回避することはできません。
+名前付き関数に `concurrent` 修飾は付けません。コンパイラは関数の通常の解析時に effect summary を作り、spawn を根とする**実行依存グラフ**で保存済み summary を推移検査します。実行依存には直接/間接呼び出しだけでなく、動的な trait witness、operator、factory、デフォルト式、フィールド初期化子、`deinit`/drop glue など、そのコードから暗黙に実行され得るユーザーコードを含みます。違反時は spawn の呼び出し位置から禁止された値までの経路を示します。これにより、名前付き関数や暗黙実行を挟んで検査を回避することはできません。
 
-### spawn fn — 引数で値を渡してスレッド起動
+### spawn fn — 引数で値をコピーしてスレッド起動
 
-`unique` を含む値をスレッドへ明示的に渡すには、`async fn` と平行な宣言形 **`spawn fn`** を使う（キャプチャでなく**引数**で境界を越える）。
+キャプチャでなく引数でスレッド境界を越える値を明示したいときは、`async fn` と平行な宣言形 **`spawn fn`** を使います。v1 では引数はコピー可能かつ sendable な値に限られ、`move` 引数や `unique` 値は渡せません。
 
 ```plew
-spawn fn worker(input: move Data) -> JoinHandle[Report] {   // input を move でスレッドへ
-    return analyze(input: input)                            // 戻り値は JoinHandle に自動ラップ
+spawn fn worker(input: Data) -> JoinHandle[Report] {   // input を論理コピーでスレッドへ
+    return analyze(input: input)                       // 戻り値は JoinHandle に自動ラップ
 }
-val handle = worker(input: move data)                    // 呼び出しがスレッドを起動
+val handle = worker(input: data)                         // 呼び出しがスレッドを起動
 val report = await handle.join()
 ```
 
 - `spawn fn g(...) -> JoinHandle[T]` は呼ぶとスレッドを起動しハンドルを返す（`async fn ... -> Promise[T]` と平行・本体の `return e` を `JoinHandle[T]` に自動ラップ）。**宣言された fn はキャプチャを持たず引数だけ**＝何が境界を越えるか完全に明示。
-- 引数は `move`（unique・所有移動）／copy（コピー可能）。いずれも型は sendable でなければならず、`borrow`/`inout`・`Ref`/nonsendable 値は渡せない（境界規則どおり）。戻りの `T` も `JoinHandle` 宣言の `[sendable T]` 制約により sendable 必須。
+- 引数はコピー可能かつ sendable でなければならず、`move`・`borrow`/`inout`・`Ref`/nonsendable 値は渡せない（境界規則どおり）。戻りの `T` も `JoinHandle` 宣言の `[sendable T]` 制約により sendable 必須で、v1 ではコピー可能型に限られます。
 
 ## sendable / nonsendable
 
@@ -189,13 +189,13 @@ val report = await handle.join()
 スレッド間で値を送るにはチャネルを使います（「共有」ではなく「送信」＝*share memory by communicating*）。**具体的な型・API はコアライブラリ送り**ですが、モデルは確定しています：
 
 - チャネルは**スレッド安全なプリミティブ**で、概念上 `struct Sender[sendable T]` / `struct Receiver[sendable T]` と宣言する。ハンドル自体も sendable（`Ref` と違い内部が atomic なので spawn を越えられる）。
-- **v1 で送る値はコピー可能かつ sendable であること**（論理コピーで渡る・`unique`、`Ref`、通常の `fn` は送れない）。core generic はまだ `allowUnique` を持たないため、チャネルでの unique move は将来 additive とする。これで送信経由でもスレッド間に共有可変が生まれず race-free を保つ。
+- **v1 で送る値はコピー可能かつ sendable であること**（論理コピーで渡る・`unique`、`Ref`、通常の `fn` は送れない）。core generic はまだ `allowUnique` を持たず、spawn 境界の unique move 自体も持たないため、チャネルでの unique move は将来 additive とする。これで送信経由でもスレッド間に共有可変が生まれず race-free を保つ。
 - 方針は**複数 Sender**。所有権で「Receiver は単一所有」を強制はしない（複数箇所が持て、`receive()` も複数回呼べる）。`receive() -> Result[T, ChannelClosed]` 方向。マルチコンシューマの意味論は core-lib 設計で詰める。
 
 ## 並行安全性 ── 実質 race-free
 
 Plew は次を保証します：
 
-- **ユーザー可視の通常値として共有可変状態を作れない**：spawn は sendable な値の論理コピーまたは unique な所有移動だけを受け取り、借用・`Ref` は越えません。[可変／nonsendable なトップレベル/`assoc` 値にも直接・推移とも到達できません](#spawn-からのトップレベルアクセス)。sendable な不変グローバルは immortal、CoW の物理バッファなど通常の sendable な不変ストレージは必要に応じて[静的に atomic カウントを選ぶ](#参照カウント方式の静的選択)ため、いずれも寿命管理が競合しません。atomic refcount とチャネル内部の同期状態はユーザー値として観測・変更できないランタイム機構です。よって**データ競合が原理的に起きず、UB も無い**。`Mutex` / `sync val` も不要。
+- **ユーザー可視の通常値として共有可変状態を作れない**：spawn はコピー可能かつ sendable な値の論理コピーだけを受け取り、unique・借用・`Ref` は越えません。[可変／nonsendable なトップレベル/`assoc` 値にも直接・推移とも到達できません](#spawn-からのトップレベルアクセス)。sendable な不変グローバルは immortal、CoW の物理バッファなど通常の sendable な不変ストレージは必要に応じて[静的に atomic カウントを選ぶ](#参照カウント方式の静的選択)ため、いずれも寿命管理が競合しません。atomic refcount とチャネル内部の同期状態はユーザー値として観測・変更できないランタイム機構です。よって**データ競合が原理的に起きず、UB も無い**。`Mutex` / `sync val` も不要。
 - **唯一の注意は async の interleave**：単一スレッドで 1 つの `Ref` を複数の async タスクが触ると、await を跨いで状態が割り込まれ得る（**メモリ安全だが論理ハザード**＝JS の共有オブジェクトと同じ・プログラマ責任）。
 - どうしてもスレッド間で可変共有したい稀なケースは、atomic 参照カウントの thread-safe 共有型（Rust の `Arc`/`Mutex` 相当）を **additive** に後付けする想定。大半はチャネルで足りる。
