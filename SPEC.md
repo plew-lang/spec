@@ -20,7 +20,7 @@ Plew は、複雑な状態を持つクライアントと、それを支える AP
 5. [構造体と列挙型](spec/02-type-system/05-structs-enums.md) — 構造体／列挙型の宣言、フィールド統一原則、Optional／Result、インスタンス生成（JSX／factory）、メンバの可視性
 6. [ジェネリクス](spec/02-type-system/06-generics.md) — 型パラメータ、impl[T]、where 句
 7. [メソッドと impl](spec/02-type-system/07-methods-impl.md) — impl、メソッド、関連関数／関連値、メソッドのオーバーロード、無名 impl のコヒーレンス
-8. [トレイト](spec/02-type-system/08-traits.md) — 定義（要求＋提供メソッドはベア `impl Trait`）、関連型、継承（supertrait）、準拠と via、値型としての利用（存在型 `any`）、標準トレイト
+8. [トレイト](spec/02-type-system/08-traits.md) — 定義（要求＋提供メソッドは `impl Trait`、外部 surface は `pub impl Trait`）、関連型、継承（supertrait）、準拠と via、値型としての利用（存在型 `any`）、標準トレイト
 9. [拡張システム](spec/02-type-system/09-extensions.md) — extension、`#` による拡張適用、orphan rule、ビューの型扱い（暗黙キャストなし）
 10. [newtype（名目型）](spec/02-type-system/10-newtype.md) — 実装の継承と Self 置換、as による再タグ
 

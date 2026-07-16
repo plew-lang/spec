@@ -179,7 +179,7 @@ impl Iterator as Iterable {
 ```
 
 - **`next` は `inout fn`**（カーソルを書き換える＝破壊操作の命令形メソッド）、**`iterator()` は名詞アクセサのメソッド**、要素を産む `Item`/`Iter` は[関連型](../02-type-system/08-traits.md)。`type Iter: Iterator[Item = Item]` は**境界の中で関連型を束縛**する記法（`any Iterator[Item=I32]` と同形で、存在型に限らず境界一般で使える）。
-- v1 はイテレータ＝コピー可能な値（unique イテレータは `allowUnique` 待ちで additive）。提供メソッド（`map`/`filter`/`enumerate`/`zip`/`count` 等）は[`Iterator` のベアな `impl Iterator` に置く](../02-type-system/08-traits.md)（準拠 `impl T as Iterator` で自動的にベアに載り、境界 `where T: Iterator` 越しにも使える・正確な署名は core-library）。
+- v1 はイテレータ＝コピー可能な値（unique イテレータは `allowUnique` 待ちで additive）。公開提供メソッド（`map`/`filter`/`enumerate`/`zip`/`count` 等）は[`Iterator` の `pub impl Iterator` に置く](../02-type-system/08-traits.md)（準拠 `impl T as Iterator` で自動的にベアに載り、境界 `where T: Iterator` 越しにも使える・正確な署名は core-library）。
 - **レンジの反復**は要素が `Step` のときだけ `Iterable` になる（条件付き準拠 `where T: Step`）→ [レンジ](../01-basics/02-basic-types.md#レンジhalfopenrange--closedrange)。
 
 ## ガード文
