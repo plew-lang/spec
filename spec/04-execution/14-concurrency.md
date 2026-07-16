@@ -80,7 +80,7 @@ Plew は依存パッケージを含めてソースから whole-program コンパ
 | 渡すもの | async（単一スレッド） | spawn（実スレッド） |
 | --- | --- | --- |
 | sendable な値（コピー可能） | ○ コピー（CoW＝遅延・バッファ共有） | ○ 論理コピー（CoW バッファは atomic カウントで物理共有可） |
-| sendable な `unique` 値 | ○ `move` | ○ `move`（所有を移す） |
+| sendable な `unique` 値 | ○ `move` | ○ `move`（入力として所有を移す。v1 の結果/チャネル payload は不可） |
 | nonsendable な値 | ○ | ✗ |
 | `Ref[T]` / `WeakRef[T]` | ○（共有・メモリ安全） | ✗（per-thread の共有可変グラフへ到達するため） |
 | `fn(...)` | ○ | ✗（sendable 保証なし） |
@@ -134,6 +134,8 @@ spawn { background() }                        // 束縛しなければ detached
 - nonsendable な `val` / `assoc val` は spawn から到達できない。
 
 不変トップレベル/`assoc val` のストレージと、それが不変値として固定的に所有する backing はプロセスと同じ寿命を持つ **immortal allocation** です。ここで immortal とは「通常実行中に retain/release しない」という意味であり、正常終了時にも決して破棄しないという意味ではありません。すべての spawn スレッドが終了した後、root event loop 上でトップレベル/`assoc val` の所有根を finalization し、unique 値の `deinit` と通常のフィールド破棄を実行します。したがって spawn からの不変 unique 読み取りと終了時破棄は競合しません。immortal な所有辺には寿命管理の retain/release が不要で、spawn から読まれても atomic RC へ昇格しません。CoW 値をローカルへコピーしても immortal backing をそのまま共有でき、ローカル側を変更するときだけ通常どおり新しい backing を作ってから書き込みます。`Ref` の中へ後から格納される値など、可変な内部状態の allocation は immortal へ伝染せず通常どおり管理します。immortal であることを表す sentinel、header、静的 provenance などは観測できない内部方式です。
+
+トップレベル初期化中に spawn worker が不変トップレベル/`assoc val` を読む場合も、worker 側で初期化子を実行しません。未初期化の値なら root event loop 上の同じ memoize サンクを force し、worker は完了を待ってから初期化済みの immortal 値を読みます。worker を含む待ち合わせの輪ができた場合は、トップレベル初期化循環として検知した時点で panic します（→ [トップレベル await と並行初期化](15-modules.md#トップレベル-await-と並行初期化)）。
 
 ```plew
 val config: Config = loadConfig() // Config は sendable
