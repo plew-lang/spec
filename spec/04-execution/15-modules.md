@@ -63,7 +63,7 @@ fn main() -> Result[(), AppError] {   // Result を返すと main 内で try が
 - **`async` は任意**：`fn main` と `async fn main` の両方が valid。実行モデルは常にイベントループなので、同期 `main` は await ゼロの特殊ケース（[同期プログラムは無税](#トップレベル-await-と並行初期化)）。
 - **戻り値は `()` か `Result[(), E]`**。`Result` を返すと **`main` 内で [`try`](../03-expressions/13-error-handling.md) が使え**、`Err` のときランタイムが**エラーを表示して非ゼロ終了**します（`Termination` 相当の lang トレイト経由）。明示的な終了コードは標準ライブラリの `Process.exit(code:)`（発散）。
 - **引数・環境は `main` の仮引数では受け取らず、標準ライブラリ経由**で取ります（`import @Std/Process` して `Process.args() -> Array[String]`／`Process.env` 等）。`print`/`Random` と同じく「ambient なプロセス能力を import 越しに明示取得」する形に揃え、出どころを可視に保つ（`main` のシグネチャを単一にし、ランタイムが複数 main 形を魔法認識しなくて済む）。`Process` は lang item ではないので import が要る。
-- **ランタイムの寿命**：`main` が返り、**かつイベントループが drain した**（保留タスク・タイマ・登録リスナ・未 join の [`spawn`](14-concurrency.md) スレッドがいずれも無い）ときにプロセスは終了します（Node/ブラウザと同じ）。よって UI アプリの `main` は「DOM にマウントして return」でよく、イベント待ちでループが生き続けます。CLI は仕事して return → ループ空 → 終了。サーバは listen して return → 接続待ちで生存。
+- **ランタイムの寿命**：`main` が返り、**すべての [`spawn`](14-concurrency.md) スレッドが完了し、join/drop が登録した結果の完了先を処理し、かつ全イベントループが drain した**（保留タスク・タイマ・登録リスナも無い）ときにプロセスは終了します（Node/ブラウザと同じ）。detached も暗黙キャンセルせず完走し、結果の破棄継続は処理されるまで所有側ループの pending work です。よって UI アプリの `main` は「DOM にマウントして return」でよく、イベント待ちでループが生き続けます。CLI は仕事して return → ループ空 → 終了。サーバは listen して return → 接続待ちで生存。
 - **パッケージは lib 面（`_.pw` の export）を常に持ち、`main` を持つ各ファイルが bin**（実行可能エントリ）＝**1 パッケージ＝1 lib ＋ N bin**（Rust の lib+bin モデル）。公開する bin は manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で列挙し、`plew run @Pkg:Name` で呼びます（→ [ビルド・実行](#ビルド実行)）。ライブラリ（他パッケージや JS から呼ぶ WASM）は bin ゼロ＝export 面だけを晒します。**複数 lib が要るならワークスペースの members**（bin は 1 パッケージ内に複数置ける）。
 
 ### 言語アイテムは常にスコープにある（import 不要）

@@ -42,9 +42,11 @@ meter * meter   // ✗ Mul[Meter] は無い（rhs に F64 を要求）→ meter 
 
 継承された実装はコンパイラが合成するものです。**ユーザーが `newtype` に `impl` を書くことはできません**（[拡張](09-extensions.md) でも同様）。独自の振る舞いを足したい場合は構造体でラップします。
 
-### unique 型を包む
+### unique と sendability の継承
 
 underlying が [`unique`](../01-basics/03-values.md#uniqueコピー不可型) 型のとき、**newtype も自動的に `unique` になります**（再宣言不要・コピー不可・move 専用）。もしコピー可能になれば newtype を複製して元の型の唯一所有を回避でき資源安全が破れるので、unique 性の伝播は必須です。`unique` だけを手で再宣言させないのは、newtype が「named underlying からすべて継承する」という原則に従うため（underlying が `= File` と単一かつ可視なので、構造体の「フィールド追加で unique 化を見落とす」罠が無く、自動継承で安全）。
+
+sendability も同じ原則で underlying からそのまま自動継承します。sendable な underlying の newtype は sendable、nonsendable な underlying の newtype は nonsendable です。`unique newtype` / `nonsendable newtype` / `sendable newtype` のような明示修飾は書けません。underlying と異なる所有権・スレッド束縛を持たせたい場合は、`unique` / `nonsendable` を明示できる struct で包みます。
 
 [`deinit`](../01-basics/03-values.md#deinit) も他の実装と同じく継承され、**最後の `newtype` 所有者が消えるとき（または最後の `Ref` 解放時）にちょうど一度走ります**。資源はラップしても閉じる必要があるためです。
 

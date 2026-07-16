@@ -13,6 +13,8 @@ export struct MyStruct[T] where T: SomeTrait {
 
 `pub` / `pub(get)` / 非公開（修飾なし）のメンバ可視性は本章末の[メンバの可視性](#メンバの可視性)を参照。非公開メンバは型の無名 impl からのみ見えます。
 
+型宣言の修飾子順序は **`export` → `unique` → `nonsendable` → `struct` / `enum`** に固定します。例えば `export unique nonsendable struct UiResource` は合法ですが、同じ意味の修飾子を並べ替えた `nonsendable unique struct` は構文エラーです。修飾子を集合として扱わず、同じ宣言に一つの書き方だけを与えます（意味論は [unique](../01-basics/03-values.md#uniqueコピー不可型) / [sendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
+
 型本体には `defaultExtension #Ext1#Ext2` を書けます。これはこの型のベア表面に**第三者拡張のメソッドを既定で載せる**宣言です（列挙は型レベルの `Type#A#B` と同じ `#` 連結）。`impl`（実装）ではなく型の宣言なので型本体に置きます。**トレイト自身の提供メソッドは準拠（`impl Type as Trait`）で自動的にベアに載る**ので、ここに書くのは拡張だけです。意味論・衝突規則・局所剥がし（`a#!Ext`）は [拡張のデフォルト拡張](09-extensions.md#デフォルト拡張defaultextension) を参照。列挙型でも同様に書けます。
 
 ```plew
