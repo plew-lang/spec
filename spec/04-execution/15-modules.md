@@ -374,7 +374,7 @@ import @Std/Testing with { expect, expectEq, expectNe, expectApprox }
 ABI は**コンパイラが定義する閉じた集合**（ユーザーが新 ABI を定義することはできない＝intrinsic 床と同じコンパイラ原始要素）なので、**文字列ではなく bareword** で書きます（import パスを直書きするのと同じ「本質的に文字列でない箇所はクォートなし」方針）。可読性のため**パレンで括る**：`extern(c)` / `repr(c)`。
 
 - 未知の ABI（`extern(florble)` 等）は **Plew 層で即 `unknown ABI` エラー**（曖昧はエラー・補完はする/忖度はしない）。文字列にしても集合は閉じる（Rust も `extern "florble"` はエラー）ので、bareword で失うものはない。
-- ABI 名にハイフンが要る場合（C の `C-unwind` 等）は camelCase で表す（`cUnwind`）。Plew の文脈キーワード（`inout`/`sendable`/`defaultExtension`）と同じ綴り方針。
+- ABI 名にハイフンが要る場合（C の `C-unwind` 等）は camelCase で表す（`cUnwind`）。Plew の文脈キーワード（`inout`/`sendable`/`nonsendable`/`allowUnique`）と同じ綴り方針。
 - コアライブラリの intrinsic 床も同じ記法＝**`extern(plewIntrinsic) { … }`**（旧 `extern "plew-intrinsic"` の bareword 化）。
 
 ### 役割（方向・レイアウト）× ABI の 2 軸

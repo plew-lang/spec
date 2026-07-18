@@ -16,14 +16,7 @@ export struct MyStruct[T] where T: SomeTrait {
 
 型宣言の修飾子順序は **`export` → `unique` → `nonsendable` → `struct` / `enum`** に固定します。例えば `export unique nonsendable struct UiResource` は合法ですが、同じ意味の修飾子を並べ替えた `nonsendable unique struct` は構文エラーです。修飾子を集合として扱わず、同じ宣言に一つの書き方だけを与えます（意味論は [unique](../01-basics/03-values.md#uniqueコピー不可型) / [sendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
-型本体には `defaultExtension #Ext1#Ext2` を書けます。これはこの型のベア表面に**第三者拡張のメソッドを既定で載せる**宣言です（列挙は型レベルの `Type#A#B` と同じ `#` 連結）。`impl`（実装）ではなく型の宣言なので型本体に置きます。**トレイト自身の公開提供メソッドは準拠（`impl Type as Trait`）で自動的にベアに載る**ので、ここに書くのは拡張だけです。意味論・衝突規則・局所剥がし（`a#!Ext`）は [拡張のデフォルト拡張](09-extensions.md#デフォルト拡張defaultextension) を参照。列挙型でも同様に書けます。
-
-```plew
-struct Counter {
-    mut val n: I32
-    defaultExtension #ChartExt   // この型に固有の拡張を明示的にベアへ（トレイトの公開提供メソッドは準拠で自動）
-}
-```
+拡張を型本体で既定化する構文は持ちません。拡張は常に使用箇所の `#Ext` で opt-in します。型の作者が拡張由来の振る舞いを型のベア表面に採用したい場合は、型を所有するモジュールの `pub impl Type` / `pub impl Type as Trait` に明示的な forwarding メソッドや準拠を書きます。トレイト自身の公開提供メソッドは準拠（`impl Type as Trait`）で自動的にベアに載ります（→ [トレイト](08-traits.md)、[拡張](09-extensions.md)）。
 
 **構造体ディレクティブ**: 詳細は今後決定予定（[メタプログラミング](../04-execution/16-metaprogramming.md) 参照）
 
