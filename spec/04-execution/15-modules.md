@@ -288,6 +288,42 @@ import @A/Connection            // ❌ パッケージ内へは潜れない（Co
 - **パッケージは常に lib 面（`_.pw` の export）を持ち、bin は `main` を持つファイル**を manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で公開列挙したもの（1 lib ＋ N bin・Rust の lib+bin モデル）。`_.pw` が `main` を持てばパッケージ名の既定 bin。`plew run @A:Name`（無セレクタは既定 bin）→ [実行エントリ](#実行エントリmain)。複数 lib が要るならワークスペースの members。
 - **自前（`/`・`./`／`../`）は自パッケージのファイル木**（`public` ゲートのような外部到達制限を受けず、どのモジュールにも届く）。外部 `@…` だけがルートの `export` 公開面に絞られます。違いは「自前はファイルパスで潜れる／外部は名前でフラットに使う」点。
 
+#### 公開 API 閉包性
+
+モジュール外から到達可能な API のシグネチャに現れる名前は、すべてその利用者からも名前解決可能でなければなりません。公開 surface に private 型・private トレイト・到達不能な関連型射影などが漏れると、利用側が「呼べるが型を書けない／読めない」状態になるためです。この規則はパッケージ外へ出るルート公開面だけでなく、パッケージ内の他モジュールへ `export` / 再エクスポートで見せる API にも同じく適用します。
+
+ここでいう「モジュール外から到達可能」は、`export` とメンバ可視性の組で決まります。`pub` 単体ではモジュール外 API になりません。型そのものが `export` されていないなら、その型の `pub impl` や `pub` フィールドは型に到達できる内部コード向けの可視性であり、モジュール外公開面ではありません。
+
+閉包性の対象は、たとえば次のような surface です：
+
+- `export fn` の引数型・戻り値型・型パラメータ境界・関連型束縛。
+- `export struct` / `export enum` の公開フィールド・公開 factory・公開メソッド・公開準拠のシグネチャ。
+- `export trait` の要求・関連型・supertrait・公開提供メソッド（`pub impl Trait`）のシグネチャ。
+- `export` / 再エクスポートで公開面に載った extension 経由で、モジュール外から呼べるメンバ・準拠のシグネチャ。
+- derive / macro などが公開 surface を合成する場合、その合成後の公開シグネチャ。
+
+```plew
+struct Secret {}
+
+export fn leak() -> Secret { ... }          // エラー: Secret は外部から見えない
+
+export struct PublicBox {
+    pub val value: Secret                    // エラー: 公開フィールドに private 型が出る
+}
+
+struct InternalBox {}
+pub impl InternalBox {
+    fn reveal() -> Secret { ... }            // OK: InternalBox 自体が外部到達しない
+}
+
+export struct PublicOk {}
+impl PublicOk {
+    fn hidden() -> Secret { ... }            // OK: 非公開メソッドは外部 surface ではない
+}
+```
+
+公開 API 閉包性はシグネチャの規則です。関数本体・メソッド本体・factory 本体の中で private helper や private 型を使うことは、外部 surface に漏れない限り許されます。
+
 ### ビルド・実行
 
 実行可能エントリは **`main` を持つファイル**で、パッケージが公開する bin は manifest の [`bin`](17-packages.md#bin公開する実行ファイル) に列挙します（`/` ルート起点パス・名前はパス末尾・`as` で rename）。プロジェクト全体から "the main" を自動探索したり `bin/` のような特別ディレクトリを設けたりはしません。
