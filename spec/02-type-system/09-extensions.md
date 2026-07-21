@@ -309,6 +309,60 @@ f(a: s#Q)   // ✓ Q 経由
 
 衝突が**連鎖の中間**で起きるときも同じ規則です。`impl C as B`・`impl D as B`・`impl B as A` があり、`A` の提供メソッド `a` が本体で `self.b()`（`B` のメソッド）を呼ぶとします。`b` は `C` と `D` の 2 経路で届くので、`a` を実装するには `b` のどちらの経路を使うかを決めねばならず、**bare な `s.a()` は原理的に曖昧でエラー**になります。`s#C.a()`／`s#D.a()` のように分岐した主語トレイトを `#` で絞ると、その選択が `a` の本体内の `self.b()` まで貫通し（`b` も同じ経路で解決され）一意に発現します（直接呼びでもジェネリック境界 `where _: A` 越しでも同じ）。
 
+### トレイト間準拠の循環はエラー
+
+active なトレイト間準拠グラフに循環がある場合はコンパイルエラーです。`impl A as B` と `impl B as A` のような bare な循環は常に active なので、定義の検査時点で reject します。これは Rust / Swift / Java / C# が trait / protocol / interface の直接・間接循環を拒否する方針と同じです。
+
+```plew
+trait A {}
+trait B {}
+
+impl A as B {}
+impl B as A {}   // エラー: A <-> B の循環
+```
+
+拡張内のトレイト間準拠は、拡張定義だけでは active になりません。したがって、inactive な extension 定義を循環の可能性だけで reject はしません。`#Ext` によって view を合成し、その extension 内の `impl B as A` が active になった時点で循環が現れたら reject します。
+
+```plew
+trait A {}
+trait B {}
+
+impl A as B {}
+
+extension E {
+    impl B as A {}
+}
+
+fn use[T](x: T) where T: B {
+    x#E      // エラー: active view では A -> B -> A が循環
+}
+```
+
+複数の拡張を重ねた時だけ循環する場合も、同じくその view 合成時に reject します。
+
+```plew
+trait A {}
+trait B {}
+struct S {}
+
+impl S as A {}
+impl S as B {}
+
+extension E {
+    impl A as B {}
+}
+extension F {
+    impl B as A {}
+}
+
+val x = <S />
+x#E      // OK
+x#F      // OK
+x#E#F    // エラー: active view に A <-> B が現れる
+```
+
+これは Rust の trait solver のように「使ったときに再帰制限や overflow として落ちる」挙動にはしません。Plew では `#Ext` が有効化する意味の出どころなので、active view の合成時に conformance graph を閉じて検査し、循環を明示的な型エラーとして報告します。
+
 ### 拡張は名前付きバンドル（à la carte 適用）
 
 1 つの拡張は**任意の `impl` を束ねた名前付きバンドル**にすぎず、名前から中身は決まりません。`value#P` は「P の中で value の型が**資格を持つ部分だけ**を活性化する」à la carte 適用です。
