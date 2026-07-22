@@ -119,6 +119,34 @@ val a = value.process()       // 型自身（-> I32）
 val b = value#Alt.process()   // Alt のもの（-> String）
 ```
 
+### 同一拡張内の衝突はエラー
+
+同一 `extension` の中では、`#Ext` ビューを開いたときの表面が一意に合成できなければなりません。したがって、同一拡張内で同じ対象に対する同じメンバが重複する場合は、拡張の定義時点でコンパイルエラーです。通常のオーバーロード規則で区別できるメソッド群は共存できますが、同じセレクタ・同じ呼び出し形、または generic によって重なり得る呼び出し形は衝突します。
+
+```plew
+extension DebugExtra {
+    impl User {
+        fn debug() -> String { return "a" }
+    }
+
+    impl User {
+        fn debug() -> String { return "b" }   // エラー: User#DebugExtra.debug が一意でない
+    }
+}
+```
+
+同一拡張内の同じ subject に対する同じ trait conformance も重複できません。trait が型引数を持つ場合、重複判定のキーは subject 型・target trait・明示された trait 型引数を正規化したものです。異なる型引数を持つ多重 conformance は、trait 側がそれを許す限り別 conformance として扱います。関連型は conformance が決める出力なので、同じ subject・同じ trait 型引数で関連型だけが違う impl は別 conformance ではなく重複です。
+
+```plew
+extension ConvertExtra {
+    impl Box as Convert[I64] { /* ... */ }
+    impl Box as Convert[I64] { /* ... */ }       // エラー: 同じ conformance の重複
+    impl Box as Convert[String] { /* ... */ }    // OK: 別の型引数
+}
+```
+
+別々の拡張が同じ対象・同じメンバ・同じ conformance を追加することはできます。その場合は `value#A` / `value#B` のように呼び出し側が拡張の出どころを選びます。同一拡張内だけを reject するのは、`#Ext` が選べる単位が拡張名までであり、その内側の候補を呼び出し側からさらに指定する構文を持たないためです。
+
 ### 拡張メソッド内の `self` の型
 
 `extension Bar { impl Foo { … } }` の中では、`self` の型は **`Foo#Bar`**（対象型 + その拡張）です。本体は一度だけ型検査されるので `self` は固定型でなければならず、拡張 `Bar` が定義時に知っているのは **対象型 `Foo` と自分自身 `Bar` だけ**だからです。呼び出し側がさらに別の拡張を効かせていても（`v: Foo#Bar#A` で `v.m()` を呼ぶ）、`m` の本体内では `self` はあくまで `Foo#Bar` で、**呼び出し側の `#A` は本体からは見えません**（見えるとモジュラに型検査できなくなる）。
