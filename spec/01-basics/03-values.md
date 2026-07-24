@@ -58,6 +58,7 @@ mut val y: String = "init"   // 可変束縛（再代入・可変メソッド可
 - 関連：v1 のジェネリクスはコピー可能型限定なので、generic `[T]` の引数は by-value（と `inout`）で書き、`borrow`/`move` は書きません（将来 `allowUnique` を入れたとき初めて「unique かもしれない `T` には `borrow`/`move` 可」になります）。メソッドの self も同様で、コピー可能型は `fn`（self 読み・既定）／`inout fn` のみ、`move fn`（self 消費）はエラーです。
 - **`inout` は旧 `&mut` の CoW 版**（Swift の `inout` と同じ位置づけ）。「変更する」行為ではなく「変更可能に借りる関係」を表すので、`modify` のような行為語ではなくこの語を使います。
 - 呼び出しの読み分け：`f(x: a)`＝x は無傷／`f(x: inout a)`＝x はこの後変わり得る／`f(x: move a)`＝x は以後使えない。
+- **`inout` の排他は Swift の memory exclusivity と同じ意味論**です。`inout` 引数／`inout fn` の self は、呼び出しの間その place への長期 write access を持ちます。この access は、同じ呼び出しの by-value 引数・デフォルト引数・レシーバ/添字の部分式など **`inout` でない引数式をすべて評価した後**に始まり、呼び出しと必要な書き戻しが終わるまで続きます。したがって `f(x: inout a, y: a)` の `y` は呼び出し前に作られた snapshot であり、`x` の `inout` と衝突しません。
 
 ```plew
 inout fn deposit(amount: I32) { self.balance = self.balance + amount }  // self を可変借用
@@ -254,7 +255,7 @@ arr.indexSet(key: k, value: tmp)     // 書き戻し（IndexSet）
 
 ### in-place は観測不能な最適化
 
-get-modify-set が**意味モデル**です。コンパイラは、(1) バッファが一意所有、(2) 変更窓で再入による無効化が起きない、(3) 場所が重ならない、を**静的に証明できる**ときに限り、コピーを介さず実メモリを直接書き換えてよい（観測挙動は不変・`Index`/`IndexSet` の副作用は保存）。証明できなければコピーへ退避します。**実行時のアクセス計装（Swift の動的 exclusivity 相当）は持ちません** ── 値のコピーは dangling しないので、計装が守るべきハザードがそもそも生じないためです。将来ボトルネックになれば「証明できない場合まで in-place 化する」方式（実行時トラップ付き）を additive に足せます（重ならない全プログラムの観測挙動は不変なので非破壊）。
+get-modify-set が**意味モデル**です。コンパイラは、(1) バッファが一意所有、(2) 変更窓で再入による無効化が起きない、(3) 場所が重ならない、を**静的に証明できる**ときに限り、コピーを介さず実メモリを直接書き換えてよい（観測挙動は不変・`Index`/`IndexSet` の副作用は保存）。証明できなければコピーへ退避します。Swift 風に全ての通常アクセスへ `begin_access` / `end_access` 相当を挿入する必要はありませんが、下記の `inout` 排他を満たすための限定的な runtime check は行います。
 
 ### 重なる inout は禁止（排他）
 
@@ -276,3 +277,40 @@ get-modify-set が**意味モデル**です。コンパイラは、(1) バッフ
   - 同一変数経由で重なりが静的に確定する形（`r->m()` レシーバと `inout r->m`・`r->xs` と `r->xs[k]`）は**コンパイルエラーに前倒し**します。
   - 検査は place を求める際に**評価済みの値だけ**で行い、引数の部分式を再評価しません（副作用を二重に発火させない）。
 - **セル pin**：deref を跨ぐ place を `inout` で貸すとき、コンパイラは**呼び出しの間そのセルを保持（retain）**します。呼び出し中にセルへの最後の参照が消えても（`Ref` 変数の付け替え等）セルは呼び出し終了まで生き、**pointee の `deinit`・解放は呼び出しの後**に起きます（Swift が class の base を retain するのと同じ機構）。この保証により **`Ref` 変数とその pointee の place は同時に貸せます**——`f(r: inout r1, x: inout r1->n)` は合法で、`x` は**呼び出し時点で `r1` が指していたセル**の `n` に束縛され（place は 1 回評価）、`r` の付け替えと独立に書き込みはそのセルへ届きます。
+
+### 呼び出し中の同時アクセス防止
+
+`inout` の長期 write access は、呼び出し先の本体から同じ storage を別名で読む／書く場合にも適用します。これは Swift と同じく単一スレッド内の memory exclusivity であり、並行性やデータ競合とは別の規則です。
+
+```plew
+mut val stepSize = 1
+
+fn increment(number: inout I64) {
+    number += stepSize       // global read
+}
+
+increment(number: inout stepSize)   // エラーまたは runtime panic: inout stepSize と global read が重なる
+```
+
+同じ規則は、closure が参照キャプチャした `mut val` を読む／書く場合にも適用します。`inout` 中に同じ storage が capture 経由で触られるなら、重なったアクセスとして拒否または panic します。
+
+一方、by-value 引数・by-value capture・通常の値読みは snapshot です。値は `inout` access が始まる前に独立コピーとして確定するため、呼び出し中に元の storage を読み続けるものではありません。
+
+```plew
+fn add(x: inout I64, y: I64) {
+    x += y
+}
+
+mut val a = 1
+add(x: inout a, y: a)    // OK: y は呼び出し前 snapshot
+```
+
+Plew の実装は Swift 風の全面的な `begin_access` / `end_access` 計装に限定しません。必要十分な条件は、active な `inout` place と、同じ storage に到達し得る ambient access の交差を漏らさないことです。コンパイラは次の規則で同時アクセスを防ぎます。
+
+- 静的に同じ storage と証明できるものはコンパイルエラー。
+- `Ref` の同一セル・closure capture・動的 dispatch など、実行時まで同一性が分からないものは、呼び出し中の active `inout` place と実アクセスを比較して panic。
+- effect が不明な FFI / host call / 未注釈の外部境界は、`inout` と同時に使う場所では conservative に拒否するか、アクセス effect の注釈を要求する。
+
+copy-in/copy-out や get-modify-set の書き戻し自体は、その `inout` access の一部として順序づけられます。書き戻しを別の ambient write として扱って自己衝突させてはいけません。ただし、書き戻しのために実際に呼ばれる setter / `IndexSet` / `deinit` の本体が別の storage に read/write する場合、その effect は通常の呼び出しと同じく検査対象です。
+
+Plew の実装方針は、全ての通常アクセスに計装を入れるのではなく、`inout` が active な呼び出しと、global / capture / `Ref` 経由など「別名で同じ storage に到達し得る ambient access」に限定して検査することです。これにより Swift と同じ exclusivity 意味論を保ちつつ、通常の local/by-value 読み書きには余計な runtime cost を持ち込みません。
