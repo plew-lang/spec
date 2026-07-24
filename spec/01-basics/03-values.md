@@ -233,7 +233,7 @@ SomeStruct { field1: val a, field2: val b } = someStruct // 別名
 
 ### get-modify-set 脱糖
 
-ネストした場所への変更 ── 代入 `place = e`、複合代入 `place OP= e`、`inout` メソッド呼び出し `place.inoutMethod(...)`、`inout` 引数 `f(x: inout place)` ── は **read-modify-write** に脱糖します。場所の部分式（添字のキー・レシーバ）は**1 回だけ評価**し、添字の段は [`Index`](../03-expressions/12-operators.md#添字アクセス)（読み）と [`IndexSet`](../03-expressions/12-operators.md#添字代入indexset)（書き）、フィールドの段は load/store で、**内側から外へ書き戻し**ます。
+場所の中身を変更して書き戻す操作 ── 複合代入 `place OP= e`、`inout` メソッド呼び出し `place.inoutMethod(...)`、`inout` 引数 `f(x: inout place)`、および `arr[i].field = e` のように添字で得た要素の内部を変更する代入 ── は **read-modify-write** に脱糖します。場所の部分式（添字のキー・レシーバ）は**1 回だけ評価**し、添字の段は [`Index`](../03-expressions/12-operators.md#添字アクセス)（読み）と [`IndexSet`](../03-expressions/12-operators.md#添字代入indexset)（書き）、フィールドの段は load/store で、**内側から外へ書き戻し**ます。
 
 ```plew
 mut val arr: Array[Counter] = [...]
@@ -246,6 +246,8 @@ arr.indexSet(key: k, value: tmp)     // 書き戻し（IndexSet）
 ```
 
 `arr[i].field = x`・`arr[i].field += x`・ネスト `a.b[i].c = x` も同様に、添字段は `Index`/`IndexSet`、フィールド段は load/store で内側から組みます。これは [複合代入](../03-expressions/12-operators.md#複合代入演算子) の「場所は 1 回評価・`Index`→演算→`IndexSet`」を、一般の場所パスと `inout` レシーバ／引数へ広げたものです。
+
+一方、添字で指した要素**全体**への単純代入 `collection[key] = value` は read-modify-write ではありません。この形では旧要素の値をユーザー可視に読む必要がないため、[`Index`](../03-expressions/12-operators.md#添字アクセス) は呼ばず、[`IndexSet`](../03-expressions/12-operators.md#添字代入indexset) だけを呼びます。`IndexSet` 実装が置換される旧 slot を release / drop することはありますが、それはコレクション内部の破棄処理であり、添字読み取り `collection[key]` とは別です。
 
 - **`IndexSet` を持たない添字（読み取り専用コレクション）越しには変更できません**（`Index` だけの型は読みのみ）。
 - **値意味論ゆえメモリ安全**：触るのは切り離したコピーで、書き戻しは*その時点の*コンテナに対して行うので、変更中に内部で再確保が起きても dangling しません（C++ のイテレータ無効化が原理的に起きない）。
