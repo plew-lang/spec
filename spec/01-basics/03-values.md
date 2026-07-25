@@ -58,7 +58,7 @@ mut val y: String = "init"   // 可変束縛（再代入・可変メソッド可
 - 関連：v1 のジェネリクスはコピー可能型限定なので、generic `[T]` の引数は by-value（と `inout`）で書き、`borrow`/`move` は書きません（将来 `allowUnique` を入れたとき初めて「unique かもしれない `T` には `borrow`/`move` 可」になります）。メソッドの self も同様で、コピー可能型は `fn`（self 読み・既定）／`inout fn` のみ、`move fn`（self 消費）はエラーです。
 - **`inout` は旧 `&mut` の CoW 版**（Swift の `inout` と同じ位置づけ）。「変更する」行為ではなく「変更可能に借りる関係」を表すので、`modify` のような行為語ではなくこの語を使います。
 - 呼び出しの読み分け：`f(x: a)`＝x は無傷／`f(x: inout a)`＝x はこの後変わり得る／`f(x: move a)`＝x は以後使えない。
-- **`inout` の排他は Swift の memory exclusivity と同じ意味論**です。`inout` 引数／`inout fn` の self は、呼び出しの間その place への長期 write access を持ちます。この access は、同じ呼び出しの by-value 引数・デフォルト引数・レシーバ/添字の部分式など **`inout` でない引数式をすべて評価した後**に始まり、呼び出しと必要な書き戻しが終わるまで続きます。したがって `f(x: inout a, y: a)` の `y` は呼び出し前に作られた snapshot であり、`x` の `inout` と衝突しません。
+- **`inout` の排他は Swift の memory exclusivity と同じ意味論**です。`inout` 引数／`inout fn` の self は、呼び出しの間その place への長期 write access を持ちます。この access は、同じ呼び出しの by-value 引数・デフォルト引数・レシーバ/添字の部分式など **by-value の引数式をすべて評価した後**に始まり、呼び出しと必要な書き戻しが終わるまで続きます。したがって `f(x: inout a, y: a)` の `y` は呼び出し前に作られた snapshot であり、`x` の `inout` と衝突しません。
 
 ```plew
 inout fn deposit(amount: I32) { self.balance = self.balance + amount }  // self を可変借用
@@ -282,6 +282,8 @@ get-modify-set が**意味モデル**です。コンパイラは、(1) バッフ
 
 `inout` の長期 write access は、呼び出し先の本体から同じ storage を別名で読む／書く場合にも適用します。これは Swift と同じく単一スレッド内の memory exclusivity であり、並行性やデータ競合とは別の規則です。
 
+この節で扱うのは `inout` の write access と ambient read/write の衝突です。`unique` 値の `borrow` は所有権・借用解析の対象であり、Swift 風の runtime active access trap の対象ではありません。`borrow` 中に同じ `unique` storage を `move` / `inout` / drop できないことは、[unique](#uniqueコピー不可型) の静的な借用規則として検査します。
+
 ```plew
 mut val stepSize = 1
 
@@ -305,7 +307,7 @@ mut val a = 1
 add(x: inout a, y: a)    // OK: y は呼び出し前 snapshot
 ```
 
-Plew の実装は Swift 風の全面的な `begin_access` / `end_access` 計装に限定しません。必要十分な条件は、active な `inout` place と、同じ storage に到達し得る ambient access の交差を漏らさないことです。コンパイラは次の規則で同時アクセスを防ぎます。
+Plew の実装は Swift 風の全面的な `begin_access` / `end_access` 計装に限定しません。必要十分な条件は、active な `inout` place と、同じ storage に到達し得る ambient access の交差を漏らさないことです。`unique borrow` の衝突はこの runtime trap 設計へ含めず、所有権解析で静的に扱います。コンパイラは次の規則で同時アクセスを防ぎます。
 
 - 静的に同じ storage と証明できるものはコンパイルエラー。
 - `Ref` の同一セル・closure capture・動的 dispatch など、実行時まで同一性が分からないものは、実際の ambient access が起きる地点で active `inout` place と比較して panic。
