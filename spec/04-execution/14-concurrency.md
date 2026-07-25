@@ -19,7 +19,7 @@ async fn main() {
 }
 ```
 
-- **戻り型は `Promise[T]` と明示して書き**、本体の `return e`（`e: T`）はコンパイラが `Promise[T]` に包みます（TypeScript と同じ）。`await` はその `Promise[T]` を `T` に開きます。`Promise[T]` はイベントループに所属するため、`T` が sendable でも **常に nonsendable** です。コピーは同じイベントループ上で同じ完了を共有します。
+- **戻り型は `Promise[T]` と明示して書き**、本体の `return e`（`e: T`）はコンパイラが `Promise[T]` に包みます（TypeScript と同じ）。`await` はその `Promise[T]` を `T` に開きます。`Promise[T]` はイベントループに所属するため、`T` が sendable でも **常に nonsendable** です。`Promise[T]` は JavaScript の Promise と同じく同一イベントループ上の完了を共有するコピー可能 handle であり、`await` は handle を消費しません。同じ `Promise[T]` は複数回 `await` でき、完了後は completion cell の結果を各 `await` ごとにコピーして返します（v1 の `T` はコピー可能型に限定）。
 - 戻り型を省略した `async fn`（`main` など）は、値を返さない `Promise` を返します。
 - **`async` は単一スレッド上の協調的中断**で、別スレッドは起きません。所有権・借用は同期コードと同じに効きます（`unique` 値を await を跨いで保持してもよい）。
 
