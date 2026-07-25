@@ -259,7 +259,7 @@ get-modify-set が**意味モデル**です。コンパイラは、(1) バッフ
 
 ### 重なる inout は禁止（排他）
 
-`inout` は[排他](#アクセスモードborrow--inout--move)です。1 つの呼び出しの複数の `inout` 位置（レシーバ／引数）が**重なる場所**を指すことは**プログラムエラー**で、**必ず検出されます**——重なったまま実行されることはなく、未定義動作は存在しません（値世界の重なりはコンパイルエラー、共有世界の重なりは実行時 panic）。検査の粒度は **Swift の Law of Exclusivity と同等**（実測で照合済み）に定め、place の世界で二分します：
+`inout` は[排他](#アクセスモードborrow--inout--move)です。1 つの呼び出しの複数の `inout` 位置（レシーバ／引数）が**重なる場所**を指すことは**プログラムエラー**で、**必ず検出されます**——重なったまま実行されることはなく、未定義動作は存在しません（値世界の重なりはコンパイルエラー、共有世界の重なりは実行時 panic）。意味論は Swift の Law of Exclusivity を踏襲しますが、実装粒度は Plew の値意味論・`Ref`・CoW に合わせて定めます。place の世界で二分します：
 
 **値世界（`Ref` の deref を経由しない place）＝静的検査（コンパイルエラー）。**
 
@@ -289,7 +289,7 @@ fn increment(number: inout I64) {
     number += stepSize       // global read
 }
 
-increment(number: inout stepSize)   // エラーまたは runtime panic: inout stepSize と global read が重なる
+increment(number: inout stepSize)   // コンパイルエラー: inout stepSize と global read が静的に重なる
 ```
 
 同じ規則は、closure が参照キャプチャした `mut val` を読む／書く場合にも適用します。`inout` 中に同じ storage が capture 経由で触られるなら、重なったアクセスとして拒否または panic します。
@@ -308,8 +308,8 @@ add(x: inout a, y: a)    // OK: y は呼び出し前 snapshot
 Plew の実装は Swift 風の全面的な `begin_access` / `end_access` 計装に限定しません。必要十分な条件は、active な `inout` place と、同じ storage に到達し得る ambient access の交差を漏らさないことです。コンパイラは次の規則で同時アクセスを防ぎます。
 
 - 静的に同じ storage と証明できるものはコンパイルエラー。
-- `Ref` の同一セル・closure capture・動的 dispatch など、実行時まで同一性が分からないものは、呼び出し中の active `inout` place と実アクセスを比較して panic。
-- effect が不明な FFI / host call / 未注釈の外部境界は、`inout` と同時に使う場所では conservative に拒否するか、アクセス effect の注釈を要求する。
+- `Ref` の同一セル・closure capture・動的 dispatch など、実行時まで同一性が分からないものは、実際の ambient access が起きる地点で active `inout` place と比較して panic。
+- effect が不明な FFI / host call / 未注釈の外部境界は、active `inout` と同時に使う場所では conservative に拒否します。外部境界の access effect 注釈は将来の additive な拡張です。
 
 copy-in/copy-out や get-modify-set の書き戻し自体は、その `inout` access の一部として順序づけられます。書き戻しを別の ambient write として扱って自己衝突させてはいけません。ただし、書き戻しのために実際に呼ばれる setter / `IndexSet` / `deinit` の本体が別の storage に read/write する場合、その effect は通常の呼び出しと同じく検査対象です。
 
