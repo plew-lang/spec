@@ -85,6 +85,7 @@ Plew は依存パッケージを含めてソースから whole-program コンパ
 | `Ref[T]` / `WeakRef[T]` | ○（共有・メモリ安全） | ✗（per-thread の共有可変グラフへ到達するため） |
 | `fn(...)` | ○ | ✗（sendable 保証なし） |
 | `sendable fn(...)` | ○ | ○（キャプチャ環境も静的に RC 方式を選択） |
+| FFI raw pointer / opaque handle | ○ | ○（sendable が既定。C 側の thread-safety は FFI 境界の外部契約） |
 | `Promise[T]` | ○ | ✗（イベントループに所属し、`T` に関係なく nonsendable） |
 | `JoinHandle[T]`（`T` は sendable） | ○ `move` | ✗（unique handle の境界 move は将来） |
 | 借用 `borrow`/`inout` | ✗ | ✗ |
@@ -180,6 +181,7 @@ val report = await handle.join()
 - `Promise[T]` はイベントループに所属するため常に nonsendable。`JoinHandle[T]` は `T` に sendable を要求するスレッド安全な組み込みハンドルで、ハンドル自身も sendable ですが、join 権を一つに保つため unique です。
 - 通常の `fn(...)` は sendable 保証を持たず、スレッドへ送る関数値は宣言地点で `sendable fn(...)` と明示する。`sendable fn` から `fn` への保証消去だけ暗黙に許す（→ [関数](../01-basics/04-functions.md#sendable-クロージャ)）。
 - 無印の存在型 `any P` は sendability 保証を消去するため nonsendable。境界を越える存在型は `any sendable P` と明示し、注入する具体型も sendable でなければならない。`any sendable P` → `any P` の保証消去だけ暗黙に許す（→ [トレイト](../02-type-system/08-traits.md#存在型の-sendability)）。
+- FFI raw pointer / opaque handle は 1 語の外部値として sendable が既定。これは外部オブジェクトの thread-safety を保証しない。Plew の race-free 保証は Plew 管理メモリに限られ、C 側の共有可変状態・別名・thread-affinity は binding 作者が `extern(c) { nonsendable type Name }` や `nonsendable` wrapper で型に encode する（→ [外部コード統合](15-modules.md#外部コード統合externc-ffi)）。
 - spawn のキャプチャ／チャネルで送る値は **sendable であること**。違反は**そのキャプチャ／送信地点でコンパイルエラー**（nonsendable 宣言または関数フィールドへの経路を示す）。
 - ジェネリックで spawn するときは `[sendable T]` で T の sendability を明示的に要求する（→ [ジェネリクス](../02-type-system/06-generics.md)）。
 - async（単一スレッド）では nonsendable 値や通常の `fn` も自由＝この制約は **実スレッド境界（spawn・チャネル）だけ**に効く。
@@ -196,6 +198,6 @@ val report = await handle.join()
 
 Plew は次を保証します：
 
-- **ユーザー可視の通常値として共有可変状態を作れない**：spawn はコピー可能かつ sendable な値の論理コピーだけを受け取り、unique・借用・`Ref` は越えません。[可変／nonsendable なトップレベル/`assoc` 値にも直接・推移とも到達できません](#spawn-からのトップレベルアクセス)。sendable な不変グローバルは immortal、CoW の物理バッファなど通常の sendable な不変ストレージは必要に応じて[静的に atomic カウントを選ぶ](#参照カウント方式の静的選択)ため、いずれも寿命管理が競合しません。atomic refcount とチャネル内部の同期状態はユーザー値として観測・変更できないランタイム機構です。よって**データ競合が原理的に起きず、UB も無い**。`Mutex` / `sync val` も不要。
+- **ユーザー可視の通常値として共有可変状態を作れない**：spawn はコピー可能かつ sendable な値の論理コピーだけを受け取り、unique・借用・`Ref` は越えません。[可変／nonsendable なトップレベル/`assoc` 値にも直接・推移とも到達できません](#spawn-からのトップレベルアクセス)。sendable な不変グローバルは immortal、CoW の物理バッファなど通常の sendable な不変ストレージは必要に応じて[静的に atomic カウントを選ぶ](#参照カウント方式の静的選択)ため、いずれも寿命管理が競合しません。atomic refcount とチャネル内部の同期状態はユーザー値として観測・変更できないランタイム機構です。よって Plew 管理メモリでは**データ競合が原理的に起きず、UB も無い**。FFI raw pointer / opaque handle 越しの外部メモリはこの保証外で、必要なら binding が `nonsendable` で越境を禁じます。`Mutex` / `sync val` も不要。
 - **唯一の注意は async の interleave**：単一スレッドで 1 つの `Ref` を複数の async タスクが触ると、await を跨いで状態が割り込まれ得る（**メモリ安全だが論理ハザード**＝JS の共有オブジェクトと同じ・プログラマ責任）。
 - どうしてもスレッド間で可変共有したい稀なケースは、atomic 参照カウントの thread-safe 共有型（Rust の `Arc`/`Mutex` 相当）を **additive** に後付けする想定。大半はチャネルで足りる。

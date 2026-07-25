@@ -151,6 +151,8 @@ struct Session {
 
 通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。**無名レコードも各フィールドから同じ規則で構造的に導出**します（ただし v1 では、外側の所有権を明示できないため [`unique` を含む無名レコードを形成できません](#uniqueコピー不可型)）。generic 型では、**実際にフィールド/payloadとして所有する型引数**から構造的に導出します。例えば `Box[I64]` は sendable、`Box[Ref[I64]]` や `Optional[Ref[I64]]` は nonsendable です。表現に現れない phantom 型引数だけでは外側の sendability は変わりません。[`newtype`](../02-type-system/10-newtype.md#unique-と-sendability-の継承) は underlying の sendability をそのまま自動継承し、明示的な sendability 修飾は書けません。[存在型](../02-type-system/08-traits.md#存在型の-sendability)は無印 `any P` が nonsendable、保証を保持する `any sendable P` が sendable な構成型です。明示的な `nonsendable struct` / `nonsendable enum` は、構成要素がすべて sendable でも型自身の sendability の導出を禁止します。逆向きの `sendable struct` / `sendable enum` 宣言はありません。
 
+FFI の raw pointer / opaque handle（`CPtr[T]` / `CMutPtr[T]` / `COpaque` / `extern(c) { type Name }`）は、外部値を指す word-like な raw value として **sendable が既定**です。これは外部オブジェクトの thread-safety を Plew が保証する意味ではありません。Plew の race-free 保証は Plew 管理メモリに限られるため、外部契約としてスレッドを越えてはいけない値は、束縛作者が `extern(c) { nonsendable type Name }`、`nonsendable repr(c) struct`、または `nonsendable struct` wrapper として明示します（→ [外部コード統合](../04-execution/15-modules.md#外部コード統合externc-ffi)）。
+
 nonsendable 値は実スレッド境界（`spawn`・スレッド間チャネル）を越えられません。単一スレッド（`async` を含む）では sendable 値と全く同じに扱えます。関数値の明示的な sendability は [無名関数（クロージャ）](04-functions.md#sendable-クロージャ)を、境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
 
 **sendability と参照カウント方式は別軸**です。`sendable` は値の内容を別スレッドから扱ってもデータ競合しないことを表し、atomic な参照カウントは共有された値の寿命管理だけを安全にします。したがって `Ref` を atomic カウントで保持しても、その referent の共有可変性は消えず nonsendable のままです。逆に、深く sendable な不変値や CoW 値は、共有され得る allocation の参照カウントだけを atomic にすれば、実データをコピーせずスレッド間で安全に共有できます。

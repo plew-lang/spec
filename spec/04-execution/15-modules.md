@@ -405,7 +405,7 @@ import @Std/Testing with { expect, expectEq, expectNe, expectApprox }
 >
 > **スコープ＝外部を「使う側」のみ（Plew が C を呼ぶ）。** Plew 関数を C へ「使わせる側」（export＝Plew→C 公開）は**未定**で本節に含めない（既存 `export` キーワードとの整合・呼出規約・マングリングを別途詰める必要があり、現状の LLVM 利用には不要なため）。
 
-`extern(c)` 境界は **Plew の保証が切れる継ぎ目**です。境界の内側（値意味論・CoW・ARC・実質 race-free）はあくまで Plew が管理するメモリについての約束で、**外部 C 世界の確保・解放・別名・スレッド安全は Plew は一切引き受けません**（"hidden cost は可・hidden meaning は不可" の原則上、ここは唱えた通り＝**生で危険なものは生で危険**と見えるべき領域）。だから FFI は**床**として最小・正直に定義し、安全性は Plew 側で `unique`＋`deinit` を被せて作ります（安全な `Array`/`String` が**コンパイラ内部の生メモリ操作**の上に安全床 `Buffer` を介して立つのと同じ"生床＋安全皮"の構図＝Plew では生操作はコンパイラ内部に隠れ、FFI ではそれが明示 opt-in の境界として露出する）。
+`extern(c)` 境界は **Plew の保証が切れる継ぎ目**です。境界の内側（値意味論・CoW・ARC・実質 race-free）はあくまで Plew が管理するメモリについての約束で、**外部 C 世界の確保・解放・別名・スレッド安全は Plew は一切引き受けません**（"hidden cost は可・hidden meaning は不可" の原則上、ここは唱えた通り＝**生で危険なものは生で危険**と見えるべき領域）。だから FFI は**床**として最小・正直に定義し、安全性は Plew 側で `unique`＋`deinit` や `nonsendable` ラッパを被せて作ります（安全な `Array`/`String` が**コンパイラ内部の生メモリ操作**の上に安全床 `Buffer` を介して立つのと同じ"生床＋安全皮"の構図＝Plew では生操作はコンパイラ内部に隠れ、FFI ではそれが明示 opt-in の境界として露出する）。
 
 ### ABI 選択子はクォートなしの bareword（`extern(c)`）
 
@@ -475,8 +475,16 @@ fn buildAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name:
 - **不透明**：フィールドも factory もリテラルも無い。**Plew 側では構築・分解できず**、`extern` 関数の戻り値として受け取り、`extern` 関数へ渡すことだけができる。
 - **型として別物**：`LLVMModuleRef` と `LLVMValueRef` は別の名前型で、暗黙変換が無いので**取り違えはコンパイルエラー**（C の `void*` 一枚で素通りする緩さを型で塞ぐ）。
 - **コピー可能・word サイズ**：中身はポインタ 1 語でビットコピー複製（整数ディスクリプタ扱い）。**`borrow`/`move` は書けない**（コピー可能型の規則どおり・[03 値・所有権](../01-basics/03-values.md)）。`val a = m; val b = m` は**同じ外部オブジェクトへの別名**を生むが、それは外部世界の話で Plew の値意味論・ARC の対象外（別名は普通に起きる＝境界の正直さ）。
+- **sendable が既定**：不透明ハンドルは 1 語の外部値として `spawn` / チャネル / join result を越えられる。これは C 側オブジェクトの thread-safety を Plew が保証する意味ではなく、Plew の race-free 保証は Plew 管理メモリに限られる。thread-affine / non-thread-safe なハンドルは、束縛作者が `nonsendable type` または `nonsendable` な安全 wrapper で明示する。
 - **deinit は走らない**：Plew は外部寿命を知らないので、ハンドルが捨てられても**自動解放しない**（生のままなら**リークも二重解放も起こり得る**＝承知で使う床）。
 - **C への射影は 1:1**：生成 C では Plew の型名をそのまま C 型名に使う。実体 `typedef` は include した C ヘッダ（`<llvm-c/Core.h>` 等）が供給。
+
+```plew
+extern(c) {
+    type LLVMModuleRef                 // sendable が既定
+    nonsendable type UIThreadHandle    // 外部契約としてスレッド束縛を明示
+}
+```
 
 ### C ポインタ `CPtr[T]` / `CMutPtr[T]` / `COpaque`
 
@@ -492,6 +500,7 @@ fn buildAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name:
 - `T` は数値・`repr(c)` struct・不透明ハンドル・別のポインタ（`LLVMValueRef *Args` → `CPtr[LLVMValueRef]`）いずれも可。
 - 表層アプリコードは `CPtr` を見ない。触るのは `extern` ブロックと薄いグルー層だけ（Plew の「生ポインタ無し」は**表層**の約束で、生ポインタはコレクション床の生メモリ操作と同様に**床／境界**に在ってよい＝コレクションでは床はコンパイラ内部に隠れ、FFI では明示 opt-in の `extern` 境界として露出する）。
 - **生ポインタ/ハンドルは「null を取り得る」値**（raw pointer なので当然）。非 null を装う別型は持たず、**取り出しが `Optional`** になる（下記 NULL）。
+- **sendable が既定**：`CPtr[T]` / `CMutPtr[T]` / `COpaque` は `T` に関わらず raw address 1 語として `spawn` / チャネル / join result を越えられる。`CMutPtr` の越境は「外部の共有可変状態を触れる」可能性を意味するが、それは FFI の unsafe 境界であり Plew 管理メモリの race-free 保証には含めない。スレッドを越えてはいけない pointer は `nonsendable struct` で包む。
 - `Array[T]` の連続記憶を渡すときは床経由で基底ポインタを一時的に借りる（寿命は呼び出し中だけ・詳細は点3/4）。
 
 ### 共有 struct `repr(c) struct`
@@ -509,6 +518,7 @@ repr(c) struct LLVMMCJITCompilerOptions {
 
 - **意味**：C ABI レイアウト固定（宣言順・自然アラインメント・並べ替え/パッキング最適化を禁止）／POD（CoW・ARC 不介入）／フィールドは C 表現可能型のみ（プリミティブ・`CPtr`/`CMutPtr`/`COpaque`・不透明ハンドル・入れ子 `repr(c)`。`Array`/`String`/`Ref` は不可）。
 - **フィールドアクセス・JSX 構築・既定値は通常の Plew 機構そのまま**（新構文は struct ヘッダの `repr(c)` 1 つだけ）：`mut val o = <LLVMMCJITCompilerOptions OptLevel=2 />` の残りは既定 0、`o.OptLevel = 3` は通常の場所代入。
+- **sendability は通常 struct と同じ**：フィールドから構造的に導出する。raw FFI pointer / handle は sendable が既定なので、多くの `repr(c)` wrapper はそのまま `spawn` を越えられる。外部契約としてスレッド束縛がある値は `nonsendable repr(c) struct` または `nonsendable` な安全 wrapper として宣言する。
 - **`c` は C *言語*でなく C *ABI***（プラットフォーム標準の万能相互運用規約）。`repr(c)` の別レイアウトとして `repr(packed)`（詰め）等を後続 additive に足せる（property `stable` でなく contract で名付ける＝`packed` も「決定的」なので衝突しない）。
 - **向きを持たない**：`repr(c) struct` は C ABI レイアウトの値型というだけなので、`extern(c)` 関数へ渡す引数に使える。将来 export 側を定めれば同じ定義がそちらにも乗る（共有 struct は方向非依存）。
 
@@ -566,6 +576,8 @@ pub impl Module {
 ```
 
 危険を `extern` ブロックと薄い皮に局所化すれば、利用側は通常の Plew 値として扱える。
+
+safe wrapper の sendability も通常の構造的規則に従う。外部資源がプロセス全体で thread-safe なら wrapper は sendable のままでよい。UI handle、スレッドローカル context、同時使用不可のセッションなどを越境させたくない場合は、外部契約を `nonsendable` として型に書く。
 
 ### 点2: 数値型の対応
 
@@ -625,6 +637,5 @@ val m = LLVMModuleCreateWithNameInContext(cname.ptr, ctx)  // 呼び出し中有
 
 - **プラットフォーム幅型の変換規則**：`as`（無損失）と `TryFrom`（可謬）の閾値の厳密化・`CSize`↔`USize`↔`U64` の関係。
 - **ハンドルの等価**：ポインタ同一性で `Eq` を提供するか。当面は非提供で開始し additive 可。
-- **spawn/sendability**：生ハンドル/ポインタを `nonsendable`（`Ref` 同様 spawn 不可・保守的）とするか、sendable な 1 語として spawn 越境を許す（正直に危険・race-free 保証は境界で切れると明記）か。
 - **使わせる側（export＝Plew→C 公開）＝未定**：Plew 関数を C へ公開する綴り・マングル抑制・可視性（既存 `export` モジュール公開との整合）・呼出規約の既定。既存 `export` キーワードと紛らわしく要設計・libLLVM-C 利用には不要なので本節スコープ外。
 - **型エイリアス**（`type FooRef = CPtr[FooOpaque]`）と **`repr(packed)`/`callconv` 軸**：当面は不透明 `type` と `repr(c)` のみ、両者は後続 additive。
