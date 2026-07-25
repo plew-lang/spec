@@ -20,7 +20,7 @@ mut val requestCount = 0       // トップレベル可変変数
 
 トップレベル `val`/`mut val`・`export val`・[`assoc val`](../02-type-system/07-methods-impl.md)（型の静的値）は、**プログラム起動時に eager に初期化**されます。`main` 本体が動き始める前に、すべて初期化済みであることが保証されます（Swift/Rust のような「初回アクセス時の遅延初期化」ではない ── いつ走るか読めない非直感を持ち込まない）。初期化子は const に限らず**任意の実行時式**を書けます（関数呼び出し・I/O・[JSX 生成](../02-type-system/05-structs-enums.md) など）。
 
-初期化は**プロセス全体で一度だけ**です。後から起動した spawn スレッドは独自のトップレベル状態を持たず、初期化子も再実行しません。sendable な不変値を spawn から読める場合も同じ一個の immortal な値を読み、スレッドごとのコピーは作りません。immortal は実行中の retain/release が不要なプロセス寿命 root という意味で、プロセス終了時の `deinit` やフィールド破棄は保証しません。したがって、トップレベル/`assoc val` 所有根の終了時 finalization 順序、`deinit` の global read / global write / localReach 依存グラフ、finalization 中だけの特別な閉店モードは持ちません。外部資源やアプリケーション上の意味を持つ片付けが必要な値は、`main` の通常スコープ、明示的な `close`/`shutdown`、または with-style のライフサイクル API に置き、通常実行中の所有者喪失として `deinit` を走らせます。可変性やsendabilityで変わるのはアクセス可否だけで、初期化回数と保存場所は変わりません。
+初期化は**プロセス全体で一度だけ**です。後から起動した spawn スレッドは独自のトップレベル状態を持たず、初期化子も再実行しません。sendable な不変値を spawn から読める場合も同じ一個の immortal な値を読み、スレッドごとのコピーは作りません。immortal は実行中の retain/release が不要なプロセス寿命 root という意味で、プロセス終了時の `deinit` やフィールド破棄は保証しません。`mut val` の現在値や nonsendable なトップレベル値も process exit では finalization されませんが、通常実行中の再代入では旧値が通常どおり drop されます。トップレベル所有根が保持する `Ref` cell とその pointee も、最後まで root から到達可能なら process exit で user `deinit` を保証しません。したがって、トップレベル/`assoc val` 所有根の終了時 finalization 順序、`deinit` の global read / global write / localReach 依存グラフ、finalization 中だけの特別な閉店モードは持ちません。外部資源やアプリケーション上の意味を持つ片付けが必要な値は、`main` の通常スコープ、明示的な `close`/`shutdown`、または with-style のライフサイクル API に置き、通常実行中の所有者喪失として `deinit` を走らせます。可変性やsendabilityで変わるのはアクセス可否だけで、初期化回数と保存場所は変わりません。
 
 **順序は依存順（force-on-read）**。静的な依存解析は持たず、各トップレベル値を「**memoize されたサンク**」として扱います。値には *未初期化 / 初期化中 / 初期化済み* の状態があり、起動時に全値を force します：
 
@@ -63,9 +63,11 @@ fn main() -> Result[(), AppError] {   // Result を返すと main 内で try が
 ```
 
 - **`async` は任意**：`fn main` と `async fn main` の両方が valid。実行モデルは常にイベントループなので、同期 `main` は await ゼロの特殊ケース（[同期プログラムは無税](#トップレベル-await-と並行初期化)）。
-- **戻り値は `()` か `Result[(), E]`**。`Result` を返すと **`main` 内で [`try`](../03-expressions/13-error-handling.md) が使え**、`Err` のときランタイムが**エラーを表示して非ゼロ終了**します（`Termination` 相当の lang トレイト経由）。明示的な終了コードは標準ライブラリの `Process.exit(code:)`（発散）。
+- **戻り値は `()` か `Result[(), E]`**。`Result` を返すと **`main` 内で [`try`](../03-expressions/13-error-handling.md) が使え**、`Err` のときランタイムが**エラーを表示して非ゼロ終了**します（`Termination` 相当の lang トレイト経由）。これは通常の `return` 経路なので、`main` 内の local は通常どおり破棄されます。明示的な終了コードは標準ライブラリの `Process.exit(code:)`（発散）。
+- **`Process.exit(code:)` は即時終了**：Rust `std::process::exit` と同じ non-unwinding termination で、現在の stack や他 worker stack を巻き戻さず、local `deinit`、worker drain、join/drop の完了先、トップレベル/`assoc val` 所有根の `deinit` を保証しません。clean shutdown が必要なら、既に破棄すべき local が残っていない既知地点でだけ呼ぶか、`main` から `Result` を返す通常経路、明示 `close`/`shutdown`、with-style API を使います。
 - **引数・環境は `main` の仮引数では受け取らず、標準ライブラリ経由**で取ります（`import @Std/Process` して `Process.args() -> Array[String]`／`Process.env` 等）。`print`/`Random` と同じく「ambient なプロセス能力を import 越しに明示取得」する形に揃え、出どころを可視に保つ（`main` のシグネチャを単一にし、ランタイムが複数 main 形を魔法認識しなくて済む）。`Process` は lang item ではないので import が要る。
 - **ランタイムの寿命**：worker の完了とは spawn 本体の `give`/`return` だけでなく、worker 自身のイベントループが drain してスレッドが終了したことを指します。`main` が返った後も root loop の通常 work と join/drop の完了先を処理し、detached を含む**すべての worker が完了するまで**生存します。root work が静穏になり全 worker が終了し、全イベントループが drain した時点でプロセスを終了します。プロセス終了時にトップレベル/`assoc val` 所有根の `deinit` は保証せず、終了時専用の finalization work も作りません。detached は暗黙キャンセルされず、結果の破棄継続は処理されるまで所有側ループの pending work です。よって UI アプリの `main` は「DOM にマウントして return」でよく、イベント待ちでループが生き続けます。CLI は仕事して return → ループ空 → 終了。サーバは listen して return → 接続待ちで生存。
+- **ライブラリ/埋め込みの寿命単位**：bin ではプロセス寿命、WASM/JS などに export 面だけを晒す library では host が作った Plew runtime instance の寿命を「プロセス寿命」に相当する単位として扱います。host の unload / GC / dispose / page teardown は user `deinit` を保証する言語上の所有者喪失 edge ではありません。明示的に片付けたい資源は export API で close/shutdown を公開するか、呼び出し側が通常実行中に所有者を失う形へ置きます。
 - **パッケージは lib 面（`_.pw` の export）を常に持ち、`main` を持つ各ファイルが bin**（実行可能エントリ）＝**1 パッケージ＝1 lib ＋ N bin**（Rust の lib+bin モデル）。公開する bin は manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で列挙し、`plew run @Pkg:Name` で呼びます（→ [ビルド・実行](#ビルド実行)）。ライブラリ（他パッケージや JS から呼ぶ WASM）は bin ゼロ＝export 面だけを晒します。**複数 lib が要るならワークスペースの members**（bin は 1 パッケージ内に複数置ける）。
 
 ### 言語アイテムは常にスコープにある（import 不要）
@@ -546,11 +548,11 @@ val mod: Optional[Module] = LLVMParseIRInContext(ctx, buf)
 
 ### 安全な皮は Plew 側で被せる
 
-生ハンドル/ポインタに RAII を付けるには、`unique` struct で包んで `deinit` に解放を書く ── 「外部資源を Plew の決定的破棄に乗せる」正典の形（[03](../01-basics/03-values.md) の `unique`/`deinit`）。
+生ハンドル/ポインタに RAII を付けるには、`unique` struct で包んで `deinit` に解放を書く ── 「外部資源を Plew の通常実行中の決定的破棄に乗せる」正典の形（[03](../01-basics/03-values.md) の `unique`/`deinit`）。終了時 cleanup が必要な wrapper はトップレベル/`assoc val` 所有根に置かず、`main` の通常スコープや明示 close/shutdown API で寿命を切ります。
 
 ```plew
 // 外部モジュールを所有する安全な値型。unique ＝コピー不可・move 専用なので
-// 二重解放は型で排除され、スコープを抜けると deinit が確実に Dispose する。
+// 二重解放は型で排除され、通常実行中にスコープを抜けると deinit が確実に Dispose する。
 unique struct Module {
     val raw: LLVMModuleRef
     deinit { LLVMDisposeModule(self.raw) }

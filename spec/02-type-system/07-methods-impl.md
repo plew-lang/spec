@@ -37,7 +37,7 @@ impl MyType {                              // 修飾なし impl → ブロック
 ```
 
 - **メンバの可視性は `impl` ブロック単位**（[メンバの可視性](05-structs-enums.md#メンバの可視性)）。`pub impl Type { … }` はブロック内のメソッド・関連関数・`factory` をすべて公開し、修飾なし `impl Type { … }` はすべて非公開（その型の無名 impl からのみ見える）にします。**メソッド個別の `pub`（`pub fn`）は書けません** ── 公開と非公開を混在させたいときは `pub impl` と `impl` の **2 ブロックに分けます**（フィールドは読み書きの非対称＝`pub(get)` があるので例外的にフィールド単位 → [メンバの可視性](05-structs-enums.md#メンバの可視性)）。
-- **`assoc val` の初期化はトップレベル `val` と同じ規則**：起動時 eager・依存順（force-on-read）・循環は起動時 panic・トップレベル await 可（→ [モジュール § トップレベル初期化と実行順序](../04-execution/15-modules.md#トップレベル初期化と実行順序)）。ジェネリック型の `assoc val` が型引数ごとに別実体になるか（単相化）は実装詳細として別途。
+- **`assoc val` の初期化はトップレベル `val` と同じ規則**：起動時 eager・依存順（force-on-read）・循環は起動時 panic・トップレベル await 可（→ [モジュール § トップレベル初期化と実行順序](../04-execution/15-modules.md#トップレベル初期化と実行順序)）。ジェネリック型の stored `assoc val` が型引数ごとに別実体になるか、また型引数依存の初期化を許すかは未決論点です。これは実装詳細ではなく、Plew が Rust の「generic scope 内 static は宣言ごとに 1 個」と Swift の「generic 型の stored static property は未サポート」のどちらへ寄せるかを決める言語仕様上の問題です。
 
 - **self のモードは `fn`（読み借用）／`inout fn`（可変借用）／`move fn`（消費）** ── [アクセスモード](../01-basics/03-values.md#アクセスモードborrow--inout--move)と同じ語。`inout fn`/`move fn` は対象が可変束縛／唯一所有のときだけ呼べる。**`Ref` 越しは `fn`/`inout fn` のみ**（`move fn` は共有を消費するため不可 → [Ref](../01-basics/03-values.md#ref--weakref共有可変)）。
 - **`async` メソッドは self を借用できない**（`inout self` が境界を跨げない）。非消費なら copy-self（`unique` でない型のみ）、消費なら `async move fn`、await を跨いで self を変更するなら **Ref 裏打ち** → [非同期処理とメモリ管理](../04-execution/14-concurrency.md)。

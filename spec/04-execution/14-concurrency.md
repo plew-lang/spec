@@ -1,6 +1,6 @@
 # 非同期処理とメモリ管理
 
-Plew は JavaScript と同様の**シングルプロセス・シングルスレッド + イベントループ**を基盤とします。重い処理を別スレッドで動かしたいときだけ `spawn` でスレッドを立てます。メモリは **ARC（自動参照カウント）** で管理し、破棄は決定的（[`deinit`](../01-basics/03-values.md#deinit)）、循環は [`WeakRef`](../01-basics/03-values.md#ref--weakref共有可変) で断ち切ります。参照カウントの更新は通常は非 atomic で、複数スレッドから共有され得る allocation だけをコンパイラが atomic にします。
+Plew は JavaScript と同様の**シングルプロセス・シングルスレッド + イベントループ**を基盤とします。重い処理を別スレッドで動かしたいときだけ `spawn` でスレッドを立てます。メモリは **ARC（自動参照カウント）** で管理し、通常実行中の所有者喪失による破棄は決定的（[`deinit`](../01-basics/03-values.md#deinit)）、循環は [`WeakRef`](../01-basics/03-values.md#ref--weakref共有可変) で断ち切ります。参照カウントの更新は通常は非 atomic で、複数スレッドから共有され得る allocation だけをコンパイラが atomic にします。
 
 > **用語**：本書は、コピー可否を **`unique`／コピー可能**、スレッド間の移送可否を **`sendable`／`nonsendable`** と表します。`sendable`／`nonsendable` はキーワードであり、型・クロージャ・generic 境界に現れます（→ [値・変数・所有権](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
@@ -41,9 +41,9 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型の型引
 
 ## メモリ管理（ARC）
 
-- **ARC（自動参照カウント）で管理**：通常実行中にスコープを抜けて最後の所有者／`Ref` が消えると**即座に**解放され、`deinit` が走る（決定的破棄＝ファイル・ソケット等の資源解放に使える）。ただし**`panic` 時は abort で巻き戻さないので `deinit` は走らない**（資源は OS が回収・[制御構造 § panic と発散](../03-expressions/11-control-flow.md#panic-と発散) 参照）。決定的破棄が保証されるのは通常実行中の正常経路（スコープ離脱・`return`・`try`/`Result` 伝播・再代入など）だけで、プロセス終了時のトップレベル/`assoc val` 所有根には保証しない。
+- **ARC（自動参照カウント）で管理**：通常実行中にスコープを抜けて最後の所有者／`Ref` が消えると**即座に**解放され、`deinit` が走る（決定的破棄＝ファイル・ソケット等の資源解放に使える）。ただし**`panic` 時は abort で巻き戻さないので `deinit` は走らない**（OS 管理資源は OS が回収するが、ユーザー定義の意味的 cleanup は保証しない・[制御構造 § panic と発散](../03-expressions/11-control-flow.md#panic-と発散) 参照）。決定的破棄が保証されるのは通常実行中の正常経路（スコープ離脱・`return`・`try`/`Result` 伝播・再代入など）だけで、プロセス終了時のトップレベル/`assoc val` 所有根には保証しない。
 - **循環は `WeakRef` で**：参照カウントは循環を回収しないので、親子の逆リンク等は `WeakRef` で断ち切る。**循環が生じ得るのは `Ref` グラフだけ**（値世界＝`Array`/`String`/`Dictionary`・[自動箱化された再帰値型](../02-type-system/05-structs-enums.md#再帰的な値型)は構造上つねに木／DAG）なので、純粋 ARC は値世界を取りこぼさない。
-  > **将来 additive：循環の自動回収。** `Ref` グラフは小さく隔離され（trace 対象は `Ref` ボックス＋`mut val` 参照キャプチャしたクロージャだけ）、しかも **`Ref` は非 atomic かつ nonsendable**（spawn を越えない＝per-thread）・**単一イベントループ**（ターン間が天然のセーフポイント）・フルマネージドなので、ARC の上に **`Ref` グラフ限定のサイクルコレクタ**（Bacon–Rajan の trial deletion・CPython/PHP で実証）を **per-thread・idle 実行**で非破壊に足せる。**ゴミ循環を検出したときの挙動**は、(1) retain path 付きで **loud に報告**（dedup・診断フック経由・**全ビルド共通＝release 含む**＝`assert`/overflow panic と同じく「意味論を変えるビルドを持たない」原則の一貫）、(2) **メモリを回収**、(3) **循環メンバの `deinit` は走らせない**。`deinit` の決定的契約は正常路（スコープ離脱・`return`・`try`/`Result` 伝播）のみで保証し、`panic`（abort）と「リークした循環」はともに契約外の脱出で deinit を飛ばす（[panic と発散](../03-expressions/11-control-flow.md#panic-と発散) と対称）。**deinit の有無で挙動を分けない**ので「構造体に `deinit` を足したら循環がリークし始める」崖は生じず、循環メンバの deinit が予期しない時刻に走る驚きも生じない（走らないだけ）。重大度は値の嘘ではない（資源の無駄＋deinit skip）ので panic でなくログ。手動 `WeakRef` は「正しさのため必須」から「決定性・性能の opt-in」へ格下げされ、`Ref[File]` 等を意図せず循環に閉じ込めた場合はメモリは回収され fd は閉じず loud に報告される（直し方は `WeakRef` で輪を切る→正常路で deinit が走る）。実装順は reporter 先行→回収追加（どちらも非破壊）。
+  > **将来 additive：循環の自動回収。** `Ref` グラフは小さく隔離され（trace 対象は `Ref` ボックス＋`mut val` 参照キャプチャしたクロージャだけ）、しかも **`Ref` は非 atomic かつ nonsendable**（spawn を越えない＝per-thread）・**単一イベントループ**（ターン間が天然のセーフポイント）・フルマネージドなので、ARC の上に **`Ref` グラフ限定のサイクルコレクタ**（Bacon–Rajan の trial deletion・CPython/PHP で実証）を **per-thread・idle 実行**で非破壊に足せる。**ゴミ循環を検出したときの挙動**は、(1) retain path 付きで **loud に報告**（dedup・診断フック経由・**全ビルド共通＝release 含む**＝`assert`/overflow panic と同じく「意味論を変えるビルドを持たない」原則の一貫）、(2) **メモリを回収**、(3) **循環メンバの `deinit` は走らせない**。`deinit` の決定的契約は正常路（スコープ離脱・`return`・`try`/`Result` 伝播・再代入など）のみで保証し、`panic`・`Process.exit`・リークした循環・process/runtime teardown のトップレベル/`assoc val` root は契約外として deinit を飛ばす（[panic と発散](../03-expressions/11-control-flow.md#panic-と発散) と対称）。**deinit の有無で挙動を分けない**ので「構造体に `deinit` を足したら循環がリークし始める」崖は生じず、循環メンバの deinit が予期しない時刻に走る驚きも生じない（走らないだけ）。重大度は値の嘘ではない（資源の無駄＋deinit skip）ので panic でなくログ。手動 `WeakRef` は「正しさのため必須」から「決定性・性能の opt-in」へ格下げされ、`Ref[File]` 等を意図せず循環に閉じ込めた場合はメモリは回収され fd は閉じず loud に報告される（直し方は `WeakRef` で輪を切る→正常路で deinit が走る）。実装順は reporter 先行→回収追加（どちらも非破壊）。
 
 ### 参照カウント方式の静的選択
 
@@ -52,7 +52,7 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型の型引
 - 実スレッド境界（`spawn`・チャネル）へ到達しないと証明された allocation は、軽量な**非 atomic カウント**で作る。
 - 境界の両側に alias が残り得る allocation は、最初から**atomic カウント**で作る。
 - v1 では unique 値の spawn 境界 move は持たない。将来 `allowUnique` と境界 move を追加する場合、親側 alias が残らない完全移送だけは非 atomic のまま移送できる余地がある。
-- 不変トップレベル/`assoc val` が所有する allocation はプロセス寿命の **immortal** とし、非 atomic/atomic のいずれの retain/release も行わない。spawn から読まれても寿命は変わらない。
+- 不変トップレベル/`assoc val` が固定的に所有する allocation はプロセス寿命の **immortal** とし、非 atomic/atomic のいずれの retain/release も行わない。spawn から読まれても寿命は変わらない。
 
 判定は明示された `spawn`/チャネル境界を根とする whole-program の may-analysis です。ローカル変数、フィールド、クロージャ、関数の引数/戻り値、generic、trait の witness、`any P` への注入と取り出しを通して共有制約を allocation まで逆伝播します。条件分岐の一経路だけでも共有され得るなら、その allocation は最初から atomic です。
 
@@ -133,7 +133,7 @@ spawn { background() }                        // 束縛しなければ detached
 - `mut val` は、読み取りだけでも spawn から到達できない。
 - nonsendable な `val` / `assoc val` は spawn から到達できない。
 
-不変トップレベル/`assoc val` のストレージと、それが不変値として固定的に所有する backing はプロセスと同じ寿命を持つ **immortal allocation** です。immortal な所有辺には寿命管理の retain/release が不要で、spawn から読まれても atomic RC へ昇格しません。プロセス終了時にトップレベル/`assoc val` 所有根の `deinit` やフィールド破棄は保証しません。これは Swift と同じく、終了時専用の finalization 順序・閉店モード・`deinit` 依存グラフを言語仕様に持ち込まないためです。外部資源や OS には分からない意味的な片付けが必要な値は、トップレベル所有根ではなく `main` の通常スコープ、明示的な `close`/`shutdown`、または with-style のライフサイクル API に置きます。CoW 値をローカルへコピーしても immortal backing をそのまま共有でき、ローカル側を変更するときだけ通常どおり新しい backing を作ってから書き込みます。`Ref` の中へ後から格納される値など、可変な内部状態の allocation は immortal へ伝染せず通常どおり管理します。immortal であることを表す sentinel、header、静的 provenance などは観測できない内部方式です。
+不変トップレベル/`assoc val` のストレージと、それが不変値として固定的に所有する backing はプロセスと同じ寿命を持つ **immortal allocation** です。immortal な所有辺には寿命管理の retain/release が不要で、spawn から読まれても atomic RC へ昇格しません。`mut val` や nonsendable なトップレベル値はこの retain/release 省略の対象ではなく、通常実行中の再代入では旧値が通常どおり drop されます。ただし現在値もトップレベル所有根であるため、プロセス終了時に user `deinit` やフィールド破棄は保証しません。これは Swift/Rust と同じく、終了時専用の finalization 順序・閉店モード・`deinit` 依存グラフを言語仕様に持ち込まないためです。外部資源や OS には分からない意味的な片付けが必要な値は、トップレベル所有根ではなく `main` の通常スコープ、明示的な `close`/`shutdown`、または with-style のライフサイクル API に置きます。CoW 値をローカルへコピーしても immortal backing をそのまま共有でき、ローカル側を変更するときだけ通常どおり新しい backing を作ってから書き込みます。`Ref` の中へ後から格納される値など、可変な内部状態の allocation は immortal へ伝染せず通常どおり管理しますが、トップレベル所有根の `Ref` が最後まで保持している cell と pointee は process exit で user `deinit` を保証しません。immortal であることを表す sentinel、header、静的 provenance などは観測できない内部方式です。
 
 トップレベル初期化中に spawn worker が不変トップレベル/`assoc val` を読む場合も、worker 側で初期化子を実行しません。未初期化の値なら root event loop 上の同じ memoize サンクを force し、worker は完了を待ってから初期化済みの immortal 値を読みます。worker を含む待ち合わせの輪ができた場合は、トップレベル初期化循環として検知した時点で panic します（→ [トップレベル await と並行初期化](15-modules.md#トップレベル-await-と並行初期化)）。
 
