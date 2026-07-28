@@ -15,7 +15,7 @@ Plew は、複雑な状態を持つクライアントと、それを支える AP
 
 ```
 export, pub, get, type, val, mut, async, spawn, await, loop, break, continue,
-give, return, panic, where, enum, struct, newtype, assoc, extension, impl, via, trait, fn,
+give, return, panic, where, enum, struct, newtype, assoc, extension, impl, via, trait, fn, macro, macrointerface,
 factory, borrow, inout, move, unique, sendable, nonsendable, deinit, guard, while, for, in, if, else,
 match, as, self, Self, extern, repr, import, part, with, try, true, false
 ```

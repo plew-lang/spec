@@ -166,7 +166,7 @@ bin = [
 
 ## ネイティブ依存（C / C++ / Rust / system ライブラリ）
 
-ネイティブ依存は **`Plew.toml` の `[[native.<kind>]]` 宣言**で表します。**ビルドスクリプト（`build.rs`/`build.zig` 的な任意コード）は持ちません** ── ビルド時に第三者コードが走らない（Go 流のサプライチェーン姿勢）。Plew 本体が宣言を読み、祝福した既知ツール（clang/cargo）を決まった作法で実行します。
+ネイティブ依存は **`Plew.toml` の `[[native.<kind>]]` 宣言**で表します。Plew 独自の **`Build.pw` / `build.zig` 的な任意 build hook は持ちません**。Plew 本体が宣言を読み、祝福した既知ツール（clang/cargo/pkg-config）を決まった作法で実行します。ただし `[[native.rust]]` は Cargo エコシステムの `build.rs` を推移的に含み得るため、cargo build は **host-exec** として lock / trust / sandbox / artifact provenance の対象になります。
 
 ```toml
 [[native.c]]
@@ -190,8 +190,8 @@ link = "static"                           # 外部 lib を静/動どちらで繋
 - **kind はテーブルヘッダ**＝`[[native.c]]` / `[[native.cpp]]` / `[[native.rust]]` / `[[native.system]]`。**ヘッダ自体が判別子**なので各ブロックは**固定スキーマ 1 つ**＝判別子フィールド不要・スキーマ補完が確実に効き、**kind 外のフィールドはそもそも書けない**（illegal state を構造で排除）。
 - **`link`（`"static" | "dynamic"`）は `[[native.system]]` 専用**＝外部システムライブラリを静的/動的どちらで繋ぐかの選択。バンドルした C/C++・Rust crate は「自分のプログラムに組み込む＝常に static」で選択肢がなく `link` を持ちません（crate の静/動は `Cargo.toml` の `crate-type` が決め、Plew は出た成果物を読んでリンク）。
 - **ターゲット条件付け（per-target の `unsupported`/差し替え）は現状持ちません**。「native の一部がターゲット非対応のときプログラムがどうフォールバックするか」は**パッケージの target サポート行列＝トップレベルの関心**で、per-dep のブール値では解けないため、入れるなら正しい階層で（additive）。Rust は `Cargo.toml` の `[target.'cfg()']`/`#[cfg]` で crate 内に条件分岐を持てます。
-- **C/C++・Rust・system(pkg-config) を祝福**（名指しサポート）。これ以外（cmake の巨大プロジェクト・Go 等）は **Rust ラッパクレート**か**プリビルドバンドル**で取り込みます（下記「巨大ライブラリ」）。
-- **任意コマンド実行を持たない**ことで Plew が起動するのは clang/cargo だけと分かり、サンドボックスのポリシーが書けます（任意コマンドのサンドボックスは原理的に困難＝SwiftPM も自動ビルドから締め出している）。
+- **C/C++・Rust・system(pkg-config) を祝福**（名指しサポート）。これ以外（cmake の巨大プロジェクト・Go 等）は v1 では **Rust ラッパクレート**か system library 経由で取り込みます。直接のプリビルドバンドル宣言は未対応です（下記「巨大ライブラリ」）。
+- **Plew 独自の任意コマンド実行を持たない**ことで、Plew が直接起動する入口は clang/cargo/pkg-config に限定され、サンドボックスのポリシーが書けます。Cargo が起動する `build.rs` や子プロセスは Rust host-exec closure として別途 provenance に含めます（任意コマンドのサンドボックスは原理的に困難＝SwiftPM も自動ビルドから締め出している）。
 
 ### C / C++（`[[native.c]]` / `[[native.cpp]]`）
 
@@ -216,17 +216,18 @@ C と C++（コンパイラ駆動と stdlib リンクだけが違う）。フィ
 
 - **crate は `crate-type = ["staticlib"]`（or `cdylib`）で `extern "C"` を晒す**＝Plew は `extern(c)` でそのシンボルを束縛します（C と同じ・cargo はリンクするシンボルを増やすだけ）。**Rust ABI は直接呼べない**ため、crates.io crate を使う場合も**間に C ABI を晒す薄い shim crate が不可避**で、`path` はその shim を指します。
 - **crates.io 依存・feature は crate の `Cargo.toml`/`Cargo.lock` が所有**（単一真実源 ── version を tag に寄せるのと同じ DRY で、`Plew.toml` に `features` を二重化しません）。
-- **Plew が駆動・所有**：`--target`（クロスコンパイル）と profile（release/debug を消費側ビルドに合わせる）／**fetch（`cargo fetch`・ネット・content hash 検証）と build（`cargo build --offline`・隔離）を分離**／成果物 `.a` の場所は cargo の `--message-format=json` 出力から取得（機構＝hidden cost）。
-- crate 側 `build.rs`（推移 crates.io 依存を含む）の信頼は Rust エコシステムに委ねます（Plew は cargo プロセスを OS レベルで包むところまで）。消費側に **Rust ツールチェーンが要り**、**`Plew.lock` に「cargo ビルド＝ビルド時にホストでコード実行」を記録**し初回はユーザー承認（provenance）。
+- **Plew が駆動・所有**：runtime native artifact は消費側 build target の `--target`（クロスコンパイル）と profile（release/debug）で作ります。一方、derive provider / `[tools]` / build-time helper として実行される Rust crate は**開発者ホスト triple**で build し、target artifact とは別 cache / fingerprint / trust entry にします。同じ package が runtime 依存かつ host-exec 依存であれば、host 用と target 用の 2 instantiation が存在します。**fetch（`cargo fetch --locked`・ネット・content hash 検証）と build（`cargo build --locked --offline`・隔離）を分離**し、成果物 `.a` の場所は cargo の `--message-format=json` 出力から取得します（機構＝hidden cost）。
+- crate 側 `build.rs`（推移 crates.io 依存を含む）の信頼は Rust エコシステムに委ねます。Plew は cargo プロセスとその子プロセスを OS レベルで sandbox し、ネットワーク・書き込み先・入力 root を policy に閉じ、wall clock / random / undeclared env / host CPU probing など deterministic profile 外の観測を閉じるところまで担います。消費側に **Rust ツールチェーンが要り**、**`Plew.lock` に「cargo ビルド＝ビルド時にホストでコード実行」という解決事実と runtime native artifact provenance**を記録し、実行許可は user-local trust DB で初回承認を求めます。`build.rs` と cargo が起動する非 cargo/rustc executable（`cc`、`pkg-config`、`protoc`、python 等）とその入力は、runtime native build でも host-exec closure の一部です。実行を許すには manifest / resolved closure / sandbox policy で列挙され、tool identity/hash、入力 root、system library / dynamic loader closure、出力 artifact hash が lock/build provenance と trust key に入らなければなりません。closure 外 executable の起動、PATH 探索、undeclared filesystem/network input は runtime native build でも reject します。
 
 ### system ライブラリ（`[[native.system]]`）
 
-- **`pkg-config = "name"`**（system ライブラリ）。**identity は値に内在**し、同じ値は dedup（`-l` 一回）。`link = "static" | "dynamic"` は任意。
+- **`pkg-config = "name"`**（system ライブラリ）。`link = "static" | "dynamic"` は任意。system lib は通常 runtime link でも host-exec 入力でも、解決された pkg-config package name/version、cflags/libs、library path、linked artifact fingerprint、runtime dynamic library identity（dynamic link 時）、pkg-config binary/toolchain fingerprint を lock / build cache key / resolved closure に含めます。
+- dynamic link では、直接 dylib だけでなく推移的 loader closure（`DT_NEEDED` / `LC_LOAD_DYLIB`、`RPATH`/`RUNPATH`、loader search path、dyld/ld.so 関連 env の固定値、各 dylib identity/hash）も provenance に含めます。host-exec に使う dynamic lib は exact loader closure を pin できなければ reject し、runtime link でも loader closure が変われば別 provenance / cache key です。pkg-config が返す flags は構造化して安全な subset に parse し、`-Xclang -load`、`-fplugin`、`-B`、`-wrapper`、linker plugin、`@response-file`、tool path override、任意コマンド起動に繋がる flag は reject します。
 - 複数の system lib は `[[native.system]]` を並べます（単一値ゆえやや冗長ですが、全 kind を `[[native.<kind>]]` で揃える一貫性・補完の確実性を優先）。
 
 ### 巨大ライブラリ（ONNX 等）
 
-declarative な C/C++ ブロックは **vendored な小〜中規模 C**（amalgamation 一枚・単機能 lib）が対象です。CMake 製の巨大 C++ をソースからビルドするのは非現実的（数千ファイル・プラットフォーム別の define 分岐・生成コード・自前の third-party 依存＝ビルドロジックの手再現＝ビルドツール地獄）。上から順に：① **既存の Rust ラッパクレート**（ONNX なら `ort`・cargo の `build.rs` が prebuilt 取得/リンクを解決済＝`[[native.rust]]` で自分の shim crate が `ort` に依存し `extern "C"` を晒す・Rust アプリと同じ手間）② **プリビルドバンドル**（ターゲット別の `.a`/`.so`/`.dll`・検証不可は作者責任）③ **system `pkg-config`**（環境に入っていれば）。**Rust ラッパも prebuilt も無い「ソース自力ビルドのみ」の巨大 lib は Plew 単体では詰む**（自前で外部ビルドして bundle）── ビルドシステムを内蔵しない（CMake/Bazel 相当を抱えない）ことの帰結。
+declarative な C/C++ ブロックは **vendored な小〜中規模 C**（amalgamation 一枚・単機能 lib）が対象です。CMake 製の巨大 C++ をソースからビルドするのは非現実的（数千ファイル・プラットフォーム別の define 分岐・生成コード・自前の third-party 依存＝ビルドロジックの手再現＝ビルドツール地獄）。v1 の選択肢は、① **既存の Rust ラッパクレート**（ONNX なら `ort`・cargo の `build.rs` が prebuilt 取得/リンクを解決済＝`[[native.rust]]` で自分の shim crate が `ort` に依存し `extern "C"` を晒す・Rust アプリと同じ手間）② **system `pkg-config`**（環境に入っていれば）です。**プリビルドバンドルを直接宣言する `[[native.prebuilt]]` は v1 では持たず reject** します。対応するなら target/ABI matrix、static/dynamic、artifact hash/signature、link path、runtime dylib provenance を lock に入れる別 schema が必要ですが、それは将来の追加です。Rust ラッパも system lib も無い「ソース自力ビルドのみ」の巨大 lib は Plew 単体では詰む── ビルドシステムを内蔵しない（CMake/Bazel 相当を抱えない）ことの帰結。
 
 言語側の `extern(c)` 構文（型マッピング・`CPtr`・`repr(c)`）は → [モジュール章「外部コード統合」](15-modules.md#外部コード統合externc-ffi)。本章はその**リンク／ビルドの宣言**を担います。
 
