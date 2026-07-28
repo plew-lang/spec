@@ -516,7 +516,7 @@ repr(c) struct LLVMMCJITCompilerOptions {
 }
 ```
 
-- **意味**：C ABI レイアウト固定（宣言順・自然アラインメント・並べ替え/パッキング最適化を禁止）／POD（CoW・ARC 不介入）／フィールドは C 表現可能型のみ（プリミティブ・`CPtr`/`CMutPtr`/`COpaque`・不透明ハンドル・入れ子 `repr(c)`。`Array`/`String`/`Ref` は不可）。
+- **意味**：C ABI レイアウト固定（宣言順・自然アラインメント・並べ替え/パッキング最適化を禁止）／POD（CoW・ARC 不介入）／フィールドは C 表現可能型のみ（プリミティブ・`CPtr`/`CMutPtr`/`COpaque`・不透明ハンドル・入れ子 `repr(c)`。`Array`/`String`/`Ref`/`MutableRef` は不可）。
 - **フィールドアクセス・JSX 構築・既定値は通常の Plew 機構そのまま**（新構文は struct ヘッダの `repr(c)` 1 つだけ）：`mut val o = <LLVMMCJITCompilerOptions OptLevel=2 />` の残りは既定 0、`o.OptLevel = 3` は通常の場所代入。
 - **sendability は通常 struct と同じ**：フィールドから構造的に導出する。raw FFI pointer / handle は sendable が既定なので、多くの `repr(c)` wrapper はそのまま `spawn` を越えられる。外部契約としてスレッド束縛がある値は `nonsendable repr(c) struct` または `nonsendable` な安全 wrapper として宣言する。
 - **`c` は C *言語*でなく C *ABI***（プラットフォーム標準の万能相互運用規約）。`repr(c)` の別レイアウトとして `repr(packed)`（詰め）等を後続 additive に足せる（property `stable` でなく contract で名付ける＝`packed` も「決定的」なので衝突しない）。

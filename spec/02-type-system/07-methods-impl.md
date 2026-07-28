@@ -39,8 +39,8 @@ impl MyType {                              // 修飾なし impl → ブロック
 - **メンバの可視性は `impl` ブロック単位**（[メンバの可視性](05-structs-enums.md#メンバの可視性)）。`pub impl Type { … }` はブロック内のメソッド・関連関数・`factory` をすべて公開し、修飾なし `impl Type { … }` はすべて非公開（その型の無名 impl からのみ見える）にします。**メソッド個別の `pub`（`pub fn`）は書けません** ── 公開と非公開を混在させたいときは `pub impl` と `impl` の **2 ブロックに分けます**（フィールドは読み書きの非対称＝`pub(get)` があるので例外的にフィールド単位 → [メンバの可視性](05-structs-enums.md#メンバの可視性)）。
 - **`assoc val` の初期化はトップレベル `val` と同じ規則**：起動時 eager・依存順（force-on-read）・循環は起動時 panic・トップレベル await 可（→ [モジュール § トップレベル初期化と実行順序](../04-execution/15-modules.md#トップレベル初期化と実行順序)）。ただし v1 では、型引数を持つ型・trait・impl の stored `assoc val` は reject します。`Box[I32].cache` と `Box[String].cache` が同じ storage を共有するのか、型引数ごとに別 storage を持つのかを構文から直感的に判断しづらいためです。型引数ごとの計算値が必要なら `assoc fn`、明示的な引数を取る factory/関数、または利用側が所有する registry/cache で表します。
 
-- **self のモードは `fn`（読み借用）／`inout fn`（可変借用）／`move fn`（消費）** ── [アクセスモード](../01-basics/03-values.md#アクセスモードborrow--inout--move)と同じ語。`inout fn`/`move fn` は対象が可変束縛／唯一所有のときだけ呼べる。**`Ref` 越しは `fn`/`inout fn` のみ**（`move fn` は共有を消費するため不可 → [Ref](../01-basics/03-values.md#ref--weakref共有可変)）。
-- **`async` メソッドは self を借用できない**（`inout self` が境界を跨げない）。非消費なら copy-self（`unique` でない型のみ）、消費なら `async move fn`、await を跨いで self を変更するなら **Ref 裏打ち** → [非同期処理とメモリ管理](../04-execution/14-concurrency.md)。
+- **self のモードは `fn`（読み借用）／`inout fn`（可変借用）／`move fn`（消費）** ── [アクセスモード](../01-basics/03-values.md#アクセスモードborrow--inout--move)と同じ語。`inout fn`/`move fn` は対象が可変束縛／唯一所有のときだけ呼べる。**`Ref` 越しは `fn` のみ、`MutableRef` 越しは `fn`/`inout fn` のみ**（`move fn` は共有を消費するため不可 → [Ref / MutableRef](../01-basics/03-values.md#ref--mutableref--weakref共有参照)）。
+- **`async` メソッドは self を借用できない**（`inout self` が境界を跨げない）。非消費なら copy-self（`unique` でない型のみ）、消費なら `async move fn`、await を跨いで self を変更するなら **MutableRef 裏打ち** → [非同期処理とメモリ管理](../04-execution/14-concurrency.md)。
 
 `impl` には `factory`（インスタンス生成）も書けます。生成は型の生成として [構造体と列挙型](05-structs-enums.md) の「インスタンス生成」にまとめています。トレイト準拠の `impl Type as Trait` と `via` は [トレイト](08-traits.md) を参照。
 

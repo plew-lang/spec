@@ -319,7 +319,7 @@ fn f(a: any Eq, b: any Eq) {        // 型として持つ・配列に入れる�
 
 演算子に対応しない純粋なトレイトで、本章が正典です。
 
-> **`Clone` トレイトは持ちません**：値意味論（CoW）では代入・受け渡しが独立コピー（`mut val b = a`）なので明示的な複製は不要です。共有が要るときだけ [`Ref`](../01-basics/03-values.md#ref--weakref共有可変)（コピーで共有）→ [値・変数・所有権](../01-basics/03-values.md)。
+> **`Clone` トレイトは持ちません**：値意味論（CoW）では代入・受け渡しが独立コピー（`mut val b = a`）なので明示的な複製は不要です。共有 identity が要るときだけ [`Ref` / `MutableRef`](../01-basics/03-values.md#ref--mutableref--weakref共有参照)（コピーで共有）→ [値・変数・所有権](../01-basics/03-values.md)。
 
 - `Hash: Eq`: ハッシュ値計算。`Dictionary`/`Set` のキー境界で、衝突解決に等価比較が要るため `Eq` をスーパートレイトに持つ（`Ord: Eq` と同じ形）。算法は Rust 流の `Hasher` ストリーミング方式に倒すが、正確なシグネチャはコアライブラリ設計時に確定（`@[Hash]` で導出可）
 - `Format`: 表示・変数展開用フォーマット（→ [文字列](../01-basics/02-basic-types.md)）

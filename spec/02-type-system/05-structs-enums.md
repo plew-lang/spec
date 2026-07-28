@@ -83,7 +83,7 @@ match maybeValue {
 
 オプショナルチェーン（`?.`）は `Chain` トレイトの実装によって有効になります。nil 合体演算子（`??`）は持たず、フォールバックは `Optional.unwrapOr(fallback:)` メソッド（eager 値／lazy クロージャのオーバーロード）で書きます（[型変換と演算子](../03-expressions/12-operators.md) 参照）。
 
-v1 の `Optional[T]` は通常の generic enum なので、`T` はコピー可能型に限ります。`Optional[File]` のように by-value の `unique` 型を直接入れることはできません。`Ref[File]` で包めば `Optional[Ref[File]]` は書けますが、これは共有 identity / 共有可変を導入する別の意味であり、「optional な唯一所有資源」ではありません。by-value の `Optional[unique]` は [`allowUnique`](06-generics.md) で generic container の move-only payload を明示的に許す設計を入れた後の将来機能です。v1 で禁じる理由は、通常 generic enum に move-only payload を入れると、copy / drop / match move / partial initialization の規則が型引数の能力に依存し、すべての generic container が所有権 IR を要求するためです。
+v1 の `Optional[T]` は通常の generic enum なので、`T` はコピー可能型に限ります。`Optional[File]` のように by-value の `unique` 型を直接入れることはできません。`Ref[File]` / `MutableRef[File]` で包めば `Optional[Ref[File]]` や `Optional[MutableRef[File]]` は書けますが、これは共有 identity を導入する別の意味であり、「optional な唯一所有資源」ではありません。by-value の `Optional[unique]` は [`allowUnique`](06-generics.md) で generic container の move-only payload を明示的に許す設計を入れた後の将来機能です。v1 で禁じる理由は、通常 generic enum に move-only payload を入れると、copy / drop / match move / partial initialization の規則が型引数の能力に依存し、すべての generic container が所有権 IR を要求するためです。
 
 > トレイトもカスタム型の一種ですが、要求・関連型・継承・準拠と `via` の意味論は独立章の[トレイト](08-traits.md)にまとめています。
 
@@ -112,16 +112,17 @@ enum List[T] {
 - コピーは独立（CoW で遅延）。`val a = tree; val b = a` の後に `b` 側を変更しても `a` には伝播しない。spawn を越え得るヒープセルは allocation 時点から atomic カウントになり、境界でも CoW を維持したまま物理共有できる（[非同期](../04-execution/14-concurrency.md#参照カウント方式の静的選択) 参照）。
 - 間接の挿入箇所（相互再帰でどの辺を箱化するか）はコンパイラが選ぶ。正しさは選び方に依らないため、**ユーザーが指定する必要はない**（`indirect` のような修飾語は持たない）。
 
-帰結として、**値意味論の再帰型は循環を作れません**。親へ貼り戻すには共有可変エイリアスが要りますが、それは `Ref` でしか得られないからです。よって自動箱化された再帰型は常に木／DAG どまりで、循環参照・`WeakRef`・リークの問題は生じません。
+帰結として、**値意味論の再帰型は循環を作れません**。親へ貼り戻すには共有 identity が要りますが、それは `Ref` / `MutableRef` を書いたときだけ得られるからです。よって自動箱化された再帰型は常に木／DAG どまりで、循環参照・弱参照・リークの問題は生じません。
 
-**共有したいときは明示的に `Ref` を書きます**。意図が型に出る形で住み分かります。
+**共有したいときは明示的に `Ref` / `MutableRef` を書きます**。意図が型に出る形で住み分かります。`MutableRef` は構築・更新に使う共有可変グラフ、`Ref` は読み取り専用ビューとして公開したい共有グラフです。`MutableRef` から `Ref` への変換はできますが、逆向きはできません。したがって作成側が可変ハンドルを外へ出さなければ、利用側は実用上の不変循環グラフとして扱えます。ただし `Ref` は deep freeze ではなく読み取り capability なので、どこかに同じ cell への `MutableRef` が残っていれば、その変更は `Ref` からも観測されます。
 
 ```plew
-val l: Optional[TreeNode]      = …   // 値の木。コピーで独立
-val g: Optional[Ref[TreeNode]] = …   // 共有可変グラフ。コピーでノード共有・循環可（→ WeakRef）
+val l: Optional[TreeNode]             = …   // 値の木。コピーで独立
+val g: Optional[Ref[TreeNode]]        = …   // 共有読み取りグラフ。コピーでノード共有・循環可（→ WeakRef）
+val m: Optional[MutableRef[TreeNode]] = …   // 共有可変グラフ。コピーでノード共有・循環可（→ WeakMutableRef）
 ```
 
-`Ref` は nonsendable であり、それを含む型にも nonsendable が自動伝播して spawn 境界を越えられません（[値・変数・所有権](../01-basics/03-values.md) / [非同期](../04-execution/14-concurrency.md)）。素の再帰値型は `Ref` を含まないため、木や AST をそのまま別スレッドへ送れます。
+`MutableRef` は nonsendable であり、それを含む型にも nonsendable が自動伝播して spawn 境界を越えられません。`Ref[T]` は読み取り専用なので、`T` が sendable なら `Ref[T]` も sendable です（[値・変数・所有権](../01-basics/03-values.md) / [非同期](../04-execution/14-concurrency.md)）。素の再帰値型は共有参照を含まないため、木や AST をそのまま別スレッドへ送れます。
 
 > 終端ケース（`Optional` の `None` 等）を持たない再帰（`struct Node { val child: Node }`）も**型としては合法**です。レイアウトは有限になりますが、有限の値を構築する手段がないだけです（Rust の `Box` 版と同じ状況）。これを禁じるのはコンパイラに不要なチェックを課すだけなので、特別扱いしません。
 
