@@ -292,16 +292,25 @@ import @A/Connection            // ❌ パッケージ内へは潜れない（Co
 
 #### 公開 API 閉包性
 
-モジュール外から到達可能な API のシグネチャに現れる名前は、すべてその利用者からも名前解決可能でなければなりません。公開 surface に private 型・private トレイト・到達不能な関連型射影などが漏れると、利用側が「呼べるが型を書けない／読めない」状態になるためです。この規則はパッケージ外へ出るルート公開面だけでなく、パッケージ内の他モジュールへ `export` / 再エクスポートで見せる API にも同じく適用します。
+パッケージ外から到達可能な API のシグネチャに現れる**同一パッケージ内の名前**は、そのパッケージのルート公開面（`src/_.pw` の `export`）からも到達可能でなければなりません。公開 surface に package-local な private 型・private トレイト・到達不能な関連型射影などが漏れると、利用側が「呼べるが型を書けない／読めない」状態になるためです。この検査は型式を再帰的に見ます。外部型の型引数、無名レコード、関数型、存在型、関連型束縛などの内側に現れる同一パッケージ内の名前も同じ規則に従います。
 
-ここでいう「モジュール外から到達可能」は、`export` とメンバ可視性の組で決まります。`pub` 単体ではモジュール外 API になりません。型そのものが `export` されていないなら、その型の `pub impl` や `pub` フィールドは型に到達できる内部コード向けの可視性であり、モジュール外公開面ではありません。
+外部パッケージ由来の名前は、その宣言元パッケージの公開面に属していればよく、現在のパッケージが再エクスポートする必要はありません。たとえば `@A` の公開 API が `@B.Token` を返すなら、`Token` の provenance は `@B` のままです。`@A` が `Token` を `@A.Token` としても提供したい場合だけ、`export @B with { Token }` で再エクスポートします。Plew は `public dependency` のような manifest 区分を持たず、依存を public/private に分類するためだけの lock 派生情報も持ちません。公開 API 閉包性は、package-local な非公開名の漏洩を閉じる規則です。
+
+公開 API に外部パッケージ由来の型が現れても、その型を利用側のソースで名指す権利は自動発生しません。利用側がその名前を `import @B with { Token }` のように束縛したいなら、通常の import 規則どおり `@B` を直接依存として宣言します。直接依存が無い場合でも、コンパイラの公開 metadata は宣言元 package identity / version と宣言 identity を保持するので、推論された値としての受け渡しや型検査はできますが、phantom dependency として source 上の import はできません。
+
+ここでいう「パッケージ」は解決済み package instance（root package、依存 package、workspace member、多版共存した各 version）です。各 module と各宣言はその package identity を持ち、判定はソース上の綴りではなく名前解決後の宣言 identity に対して行います。`import @B with { Token as BToken }` や `export ./Internal with { Token as Lexeme }` の alias は use-site / public surface の表示名を変えますが、宣言の provenance は変えません。別名で再エクスポートした場合、外部 surface では公開別名を正規の表示名として使い、公開されていない内部名を metadata / docs / 診断に漏らしません。
+
+関連型射影は、正規化後の源トレイトを閉包性チェック対象にします。`T#Trait.Item` の `Trait` は通常の型・トレイト名と同じ公開面ルールで検査し、`Item` はその `Trait` の公開要求集合に属する関連型でなければなりません。一意短縮 `T.Item` も、解決後の源トレイトで同じ規則に従います。
+
+ここでいう「パッケージ外から到達可能」は、ルート公開面の `export` とメンバ可視性の組で決まります。`pub` 単体ではパッケージ外 API になりません。型そのものがルート公開面に載っていないなら、その型の `pub impl` や `pub` フィールドは型に到達できる内部コード向けの可視性であり、パッケージ外公開面ではありません。
 
 閉包性の対象は、たとえば次のような surface です：
 
 - `export fn` の引数型・戻り値型・型パラメータ境界・関連型束縛。
+- `export val` / `export mut val` の公開型（型注釈が無い場合は推論後に公開 surface へ現れる型）。
 - `export struct` / `export enum` の公開フィールド・公開 factory・公開メソッド・公開準拠のシグネチャ。
 - `export trait` の要求・関連型・supertrait・公開提供メソッド（`pub impl Trait`）のシグネチャ。
-- `export` / 再エクスポートで公開面に載った extension 経由で、モジュール外から呼べるメンバ・準拠のシグネチャ。
+- `export` / 再エクスポートで公開面に載った extension 経由で、パッケージ外から呼べるメンバ・準拠のシグネチャ。
 - derive / macro などが公開 surface を合成する場合、その合成後の公開シグネチャ。
 
 ```plew
@@ -322,6 +331,34 @@ export struct PublicOk {}
 impl PublicOk {
     fn hidden() -> Secret { ... }            // OK: 非公開メソッドは外部 surface ではない
 }
+```
+
+パッケージ内の別モジュールで定義した型をパッケージ外 API に出す場合も、ルート公開面で明示的に転送します：
+
+```plew
+// src/Internal.pw
+export struct Token {}
+
+// src/_.pw
+import ./Internal with { Token }
+
+export fn parse() -> Token { ... }           // エラー: Token は @ThisPackage の公開面に無い
+```
+
+```plew
+// src/_.pw
+export ./Internal with { Token }
+import ./Internal with { Token }
+
+export fn parse() -> Token { ... }           // OK: Token は @ThisPackage.Token として到達可能
+```
+
+外部公開名は再エクスポート不要です：
+
+```plew
+import @B with { Token }
+
+export fn parse() -> Token { ... }           // OK: Token は @B の公開面にある
 ```
 
 公開 API 閉包性はシグネチャの規則です。関数本体・メソッド本体・factory 本体の中で private helper や private 型を使うことは、外部 surface に漏れない限り許されます。
