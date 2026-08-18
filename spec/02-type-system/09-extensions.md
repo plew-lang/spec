@@ -378,7 +378,9 @@ impl A as B {}
 impl B as A {}   // エラー: A <-> B の循環
 ```
 
-extension は receiver に対する適用を opt-in にする名前付き bundle だが、bundle 内の trait-to-trait edge が循環してよいことは意味しない。**各 extension 定義時**に、その bundle の edge と常に有効な bare edge を合わせて検査する。そこに cycle があれば、その bundle はどの receiver にも安全に適用できないので reject する。
+extension は receiver に対する適用を opt-in にする名前付き bundle だが、bundle 内の trait-to-trait edge が循環してよいことは意味しない。cycle 検査における bundle は、同じ解決済み extension identity を持つ全 declaration part を統合したものである。コンパイラはロードされたプログラムの全 bare edge と全 bundle を登録してから、各 bundle についてその edge と bare edge の和を宣言検査する。したがって module・ファイル・宣言順によって cycle の可否は変わらない。この検査は関数本体・receiver・concrete instance を検査する前に行う。
+
+そこに cycle があれば、一部の receiver では cyclic edge が到達不能でも、その bundle の**宣言整合性**が壊れているため bundle 全体を reject する。これは「どの receiver にも安全な利用がない」という主張ではない。receiver/bound は後述する bundle の**適用可能性**だけを決め、cycle を解消しない。
 
 ```plew
 trait A {}
@@ -403,7 +405,7 @@ extension E {
 }
 ```
 
-別々の extension を**組み合わせたときだけ** cycle になる場合、各 bundle は単独では健全なので定義時には reject しない。しかし、extension 集合は `#` を書いた時点で明示的に合成される。選択した bundle 群と bare edge の和に cycle があれば、receiver の型・bound・実体に依存せず、その source-set を形成した箇所で reject する。
+別々の extension を**組み合わせたときだけ** cycle になる場合、各 bundle は単独では健全なので宣言検査では reject しない。しかし extension 集合は `#`/`#!` により明示的に変更される。各変更時点の source-set は、現在の view が持つ extension の正規化済み集合であり、trait source selector は edge を加えないため含まない。選択した bundle 群と bare edge の和に cycle があれば、receiver の型・bound・実体に依存せず、その source-set を形成した箇所で reject する。後続の `#!` で extension を外しても、既に形成した不正な source-set を救済できない。この規則は値 view・型注釈・関数シグネチャ・generic 引数など、extension 集合を形成または変更する全ての箇所に適用する。
 
 ```plew
 trait A {}
@@ -420,7 +422,15 @@ fn use[T](value: T#E) where T: A {}       // OK
 fn invalid[T](value: T#E#F) where T: A {} // エラー: source-set E + F が A <-> B を作る
 ```
 
-型引数を持つ trait edge も同じく、宣言された generic pattern を単一化して**同じ trait instance へ戻る有限 cycle があり得るか**を検査する。実際の concrete instance が現れるまで診断を延期しない。一方、`A[T] -> B[Array[T]] -> A[Array[T]]` のように同じ instance へ戻らず型だけが成長する関係は cycle とは別問題であり、この規則では reject しない。
+型引数を持つ trait edge も同じく、宣言された generic pattern を単一化して**同じ trait instance へ戻る有限 cycle があり得るか**を検査する。各 edge の traversal では binder を fresh にし、substitution はその path にだけ属する。trait owner、位置ごとの型引数、関連型 binding を同一性の対象にし、単一化には occurs check を用いる。`where` の充足可能性や現存する conformer は、この構造検査を抑制しない。同じ宣言 edge を別の instance で再び通ることも許され、閉路が同じ instance に戻るなら reject する。
+
+```plew
+impl[T] A[T] as B[T] {}
+impl B[I64] as A[String] {}
+impl B[String] as A[I64] {} // エラー: A[I64] -> B[I64] -> A[String] -> B[String] -> A[I64]
+```
+
+実際の concrete instance が現れるまで診断を延期しない。一方、`A[T] -> B[Array[T]] -> A[Array[T]]` のように始点へ戻るには `T = Array[T]` が必要で occurs check に失敗し、同じ instance へ戻らず型だけが成長する関係は cycle とは別問題である。この規則では reject しない。
 
 これは Rust の trait solver のように、具体的な利用時に再帰制限や overflow として落ちる挙動にはしない。Plew は extension の**適用可能性**だけを receiver/bound に基づいて判定し、cycle・重複・解決不能な衝突のような**宣言整合性**は eager に reject する。たとえば `extension E { impl B { … } }` に対する `value#E` は、value が B に準拠する（generic なら `where T: B` がある）ときだけ有効だが、E の trait graph が健全かどうかは value を待たずに決まる。
 
