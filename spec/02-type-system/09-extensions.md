@@ -405,7 +405,7 @@ extension E {
 }
 ```
 
-別々の extension を**組み合わせたときだけ** cycle になる場合、各 bundle は単独では健全なので宣言検査では reject しない。extension 集合は `#`/`#!` により明示的に変更されるが、cycle 検査の source-set は一つの view 式を最後まで正規化して得る extension 集合である。trait source selector は edge を加えないため含まない。選択した bundle 群と bare edge の和に cycle があれば、receiver の型・bound・実体に依存せず、その view 式を reject する。したがって `T#E#F#!F` は最終集合が `{E}` なら `{E}` として一度だけ検査し、中間の `{E,F}` は観測しない。この規則は値 view・型注釈・関数シグネチャ・generic 引数など、extension 集合を形成または変更する全ての箇所に適用する。
+別々の extension を**組み合わせたときだけ** cycle になる場合、各 bundle は単独では健全なので宣言検査では reject しない。extension 集合は `#`/`#!` により明示的に変更されるが、cycle 検査の source-set は一つの view 式を最後まで正規化して得る extension 集合である。trait source selector は edge を加えないため含まない。選択した bundle 群と bare edge の和に cycle があれば、receiver の型・bound・実体に依存せず、その view 式を reject する。`#!` は継承した view を base へ戻すため、`T#E#F#!F#E` は最終集合 `{E}` として一度だけ検査し、中間の `{E,F}` は観測しない。この規則は値 view・型注釈・関数シグネチャ・generic 引数など、extension 集合を形成または変更する全ての箇所に適用する。
 
 ```plew
 trait A {}
