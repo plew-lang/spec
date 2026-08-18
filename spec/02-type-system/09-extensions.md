@@ -430,7 +430,17 @@ impl B[I64] as A[String] {}
 impl B[String] as A[I64] {} // エラー: A[I64] -> B[I64] -> A[String] -> B[String] -> A[I64]
 ```
 
-実際の concrete instance が現れるまで診断を延期しない。一方、`A[T] -> B[Array[T]] -> A[Array[T]]` のように始点へ戻るには `T = Array[T]` が必要で occurs check に失敗し、同じ instance へ戻らず型だけが成長する関係は cycle とは別問題である。この規則では reject しない。
+実際の concrete instance が現れるまで診断を延期しない。さらに、同じ trait owner へ戻る path の始点と終点を単一化するために `T = Array[T]` のような**自己埋め込み substitution**が必要なら、それは **instance-growth cycle** である。exact に同じ instance へ戻らなくても、path を繰り返すたびに型引数が成長し、無限個の conformance instance を生成するため、宣言時に reject する。
+
+```plew
+trait A[Item] {}
+trait B[Item] {}
+
+impl[T] A[T] as B[Array[T]] {}
+impl[T] B[T] as A[T] {} // エラー: T = Array[T] を要する instance-growth cycle
+```
+
+この規則は `Array` だけに特別扱いしない。`T ↦ (T, T)` や複数 trait をまたぐ自己埋め込みも同じく reject する。対照的に、`A[I64] -> B -> A[String]` のように有限個の異なる instance を経て停止する引数変更は、別の exact / growth cycle を作らない限り許可する。要素の capability をコンテナへ持ち上げる通常の実装は、`impl[T] Array[T] as Trait where T: Trait` のように**具体の receiver 型**へ直接条件付き準拠を書き、trait-to-trait closure を無限化しない。
 
 これは Rust の trait solver のように、具体的な利用時に再帰制限や overflow として落ちる挙動にはしない。Plew は extension の**適用可能性**だけを receiver/bound に基づいて判定し、cycle・重複・解決不能な衝突のような**宣言整合性**は eager に reject する。たとえば `extension E { impl B { … } }` に対する `value#E` は、value が B に準拠する（generic なら `where T: B` がある）ときだけ有効だが、E の trait graph が健全かどうかは value を待たずに決まる。
 
