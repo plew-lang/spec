@@ -366,9 +366,9 @@ f(a: s#Q)   // ✓ Q 経由
 
 必要なら `a` の実装者が本体で `self#C.b()`／`self#D.b()` のように明示します。ただしその選択子は `impl B as A` の抽象的な `self: B` に実際に適用でき、かつ本体を一度だけ型検査できる場合に限ります。呼び出し元の view・具象準拠経路・単相化順序を本体の解決へ持ち込むことはありません。これは extension メソッド本体で呼び出し側の `#` が見えない規則と同じで、メソッド本体の意味を宣言位置だけから読めるようにします。
 
-### トレイト間準拠の循環はエラー
+### トレイト間準拠の循環は構造エラー
 
-active なトレイト間準拠グラフに循環がある場合はコンパイルエラーです。`impl A as B` と `impl B as A` のような bare な循環は常に active なので、定義の検査時点で reject します。これは Rust / Swift / Java / C# が trait / protocol / interface の直接・間接循環を拒否する方針と同じです。
+トレイト間準拠の循環は、値の実体・generic の concrete instance・extension を適用する receiver を待たずに reject する**構造エラー**です。`impl A as B` と `impl B as A` のような bare な循環は、宣言グラフそのものが不正です。これは Rust / Swift / Java / C# が trait / protocol / interface の直接・間接循環を拒否する方針と同じです。
 
 ```plew
 trait A {}
@@ -378,7 +378,7 @@ impl A as B {}
 impl B as A {}   // エラー: A <-> B の循環
 ```
 
-拡張内のトレイト間準拠は、拡張定義だけでは active になりません。したがって、inactive な extension 定義を循環の可能性だけで reject はしません。`#Ext` によって view を合成し、その extension 内の `impl B as A` が active になった時点で循環が現れたら reject します。
+extension は receiver に対する適用を opt-in にする名前付き bundle だが、bundle 内の trait-to-trait edge が循環してよいことは意味しない。**各 extension 定義時**に、その bundle の edge と常に有効な bare edge を合わせて検査する。そこに cycle があれば、その bundle はどの receiver にも安全に適用できないので reject する。
 
 ```plew
 trait A {}
@@ -387,23 +387,27 @@ trait B {}
 impl A as B {}
 
 extension E {
-    impl B as A {}
-}
-
-fn use[T](x: T) where T: B {
-    x#E      // エラー: active view では A -> B -> A が循環
+    impl B as A {} // エラー: bare A -> B と E の B -> A が循環
 }
 ```
 
-複数の拡張を重ねた時だけ循環する場合も、同じくその view 合成時に reject します。
+同じ bundle の内部だけで閉じる cycle も同様に定義時エラーである。receiver がその trait に準拠しているか、プログラムが bundle を実際に使うかは関係ない。
+
+```plew
+trait B {}
+trait C {}
+
+extension E {
+    impl B as C {}
+    impl C as B {} // エラー: E 自身が循環
+}
+```
+
+別々の extension を**組み合わせたときだけ** cycle になる場合、各 bundle は単独では健全なので定義時には reject しない。しかし、extension 集合は `#` を書いた時点で明示的に合成される。選択した bundle 群と bare edge の和に cycle があれば、receiver の型・bound・実体に依存せず、その source-set を形成した箇所で reject する。
 
 ```plew
 trait A {}
 trait B {}
-struct S {}
-
-impl S as A {}
-impl S as B {}
 
 extension E {
     impl A as B {}
@@ -412,13 +416,13 @@ extension F {
     impl B as A {}
 }
 
-val x = <S />
-x#E      // OK
-x#F      // OK
-x#E#F    // エラー: active view に A <-> B が現れる
+fn use[T](value: T#E) where T: A {}       // OK
+fn invalid[T](value: T#E#F) where T: A {} // エラー: source-set E + F が A <-> B を作る
 ```
 
-これは Rust の trait solver のように「使ったときに再帰制限や overflow として落ちる」挙動にはしません。Plew では `#Ext` が有効化する意味の出どころなので、active view の合成時に conformance graph を閉じて検査し、循環を明示的な型エラーとして報告します。
+型引数を持つ trait edge も同じく、宣言された generic pattern を単一化して**同じ trait instance へ戻る有限 cycle があり得るか**を検査する。実際の concrete instance が現れるまで診断を延期しない。一方、`A[T] -> B[Array[T]] -> A[Array[T]]` のように同じ instance へ戻らず型だけが成長する関係は cycle とは別問題であり、この規則では reject しない。
+
+これは Rust の trait solver のように、具体的な利用時に再帰制限や overflow として落ちる挙動にはしない。Plew は extension の**適用可能性**だけを receiver/bound に基づいて判定し、cycle・重複・解決不能な衝突のような**宣言整合性**は eager に reject する。たとえば `extension E { impl B { … } }` に対する `value#E` は、value が B に準拠する（generic なら `where T: B` がある）ときだけ有効だが、E の trait graph が健全かどうかは value を待たずに決まる。
 
 ### 拡張は名前付きバンドル（à la carte 適用）
 
