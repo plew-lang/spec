@@ -422,7 +422,7 @@ fn use[T](value: T#E) where T: A {}       // OK
 fn invalid[T](value: T#E#F) where T: A {} // エラー: source-set E + F が A <-> B を作る
 ```
 
-型引数を持つ trait edge も同じく、宣言された generic pattern を単一化して**同じ trait instance へ戻る有限 cycle があり得るか**を検査する。各 edge の traversal では binder を fresh にし、substitution はその path にだけ属する。trait owner、位置ごとの型引数、関連型 binding を同一性の対象にし、単一化には occurs check を用いる。`where` の充足可能性や現存する conformer は、この構造検査を抑制しない。同じ宣言 edge を別の instance で再び通ることも許され、閉路が同じ instance に戻るなら reject する。
+型引数を持つ trait edge も同じく検査する。trait instance の同一性は、解決済みの**trait declaration owner と位置ごとの型引数**である。各 edge の traversal では binder を fresh にし、substitution はその path にだけ属する。関連型 binding は選ばれた conformance witness の**出力**であって instance identity には含めない。ただし `T#P.Item` が位置型引数に書かれているとき、その射影式自体は通常の型項として比較する。`where T: P[Item = X]` や `any P[Item = X]` は、まずこの instance key で witness を選び、その後に関連型出力が `X` を満たすか照合する二段階の制約である。`where` の充足可能性や現存する conformer は、この構造検査を抑制しない。同じ宣言 edge を別の instance で再び通ることも許され、閉路が同じ instance に戻るなら reject する。
 
 ```plew
 impl[T] A[T] as B[T] {}
@@ -430,17 +430,17 @@ impl B[I64] as A[String] {}
 impl B[String] as A[I64] {} // エラー: A[I64] -> B[I64] -> A[String] -> B[String] -> A[I64]
 ```
 
-実際の concrete instance が現れるまで診断を延期しない。さらに、同じ trait owner へ戻る path の始点と終点を単一化するために `T = Array[T]` のような**自己埋め込み substitution**が必要なら、それは **instance-growth cycle** である。exact に同じ instance へ戻らなくても、path を繰り返すたびに型引数が成長し、無限個の conformance instance を生成するため、宣言時に reject する。
+実際の concrete instance が現れるまで診断を延期しない。任意の generic 型書換えの停止性を推測する代わりに、trait owner graph の**同一強連結成分（SCC）内**では、各 edge に方向付きの局所**非増大**規則を課す。全位置型引数を一つの product term として比べ、target は subject より多くの固定型構築子（`Array`・タプル・nominal generic application など）を持てない。target が使う free binder は subject の binder に限られ、各 binder `v` ごとに target での出現回数は subject での出現回数を超えられない。したがって型構造や型変数を一時的に増やしてから後で縮める有限経路も、SCC 内では許可しない。SCC 外の edge は戻る経路がないため、この局所規則の対象外であり、型構造を増やしてよい。
 
 ```plew
 trait A[Item] {}
 trait B[Item] {}
 
-impl[T] A[T] as B[Array[T]] {}
-impl[T] B[T] as A[T] {} // エラー: T = Array[T] を要する instance-growth cycle
+impl[T] A[T] as B[Array[T]] {} // エラー: SCC 内で target が Array 構築子を増やす
+impl[T] B[T] as A[T] {}
 ```
 
-この規則は `Array` だけに特別扱いしない。`T ↦ (T, T)` や複数 trait をまたぐ自己埋め込みも同じく reject する。対照的に、`A[I64] -> B -> A[String]` のように有限個の異なる instance を経て停止する引数変更は、別の exact / growth cycle を作らない限り許可する。要素の capability をコンテナへ持ち上げる通常の実装は、`impl[T] Array[T] as Trait where T: Trait` のように**具体の receiver 型**へ直接条件付き準拠を書き、trait-to-trait closure を無限化しない。
+この規則は `Array` だけに特別扱いしない。`T ↦ (T, T)`、`A[(T,U)] → B[(T,T)]`、複数 trait をまたぐ同種の増大も SCC 内では reject する。対照的に `A[Array[T]] → B[T]` のような縮小は許可する。exact cycle は別途、fresh binder と path-local substitution で同じ owner＋位置型引数への再訪として reject する。局所非増大により型構築子数は path 上で非増大であり、有限の宣言 signature と初期型の部分項だけから状態が作られるため、無限 path があれば同じ instance を再訪する。要素の capability をコンテナへ持ち上げる通常の実装は、`impl[T] Array[T] as Trait where T: Trait` のように**具体の receiver 型**へ直接条件付き準拠を書き、trait-to-trait closure を無限化しない。
 
 これは Rust の trait solver のように、具体的な利用時に再帰制限や overflow として落ちる挙動にはしない。Plew は extension の**適用可能性**だけを receiver/bound に基づいて判定し、cycle・重複・解決不能な衝突のような**宣言整合性**は eager に reject する。たとえば `extension E { impl B { … } }` に対する `value#E` は、value が B に準拠する（generic なら `where T: B` がある）ときだけ有効だが、E の trait graph が健全かどうかは value を待たずに決まる。
 
