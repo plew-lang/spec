@@ -103,7 +103,7 @@ impl Counter as Iterator {
 - **型引数（多重 conformance）と関連型（出力）の使い分け**: 入力＝呼ぶ側が選び 1 型に複数 conformance あり得るものは**型引数**にする（`Add[Rhs]`：`Vec` は `Add[Vec]` と `Add[F64]` の両方に準拠できる）。出力＝impl が一意に決めるものは**関連型**（`type Output`・`Iterator.Item`）。1 つのトレイトが両方を持ってよい（`Add[Rhs] { type Output }`）。複数 conformance のメソッドは引数型で区別される**オーバーロード**になる（→ [メソッドのオーバーロード](07-methods-impl.md)、[型変換と演算子](../03-expressions/12-operators.md)）。
 - 関連型は**型の名前空間**に属し、メソッド・フィールドのオーバーロード集合とは別。関連型名がメソッド名と衝突することはない。`type Name = …` の充足に `via` は使わない（直接束ねる）。
 - **制約を付けられる**: `type Item: Format` のように要求側で制約を課せる。impl はその制約を満たす型で束ねる。ベア `type Item` は制約なし。
-- **外部からの射影の正規形は `T#Trait.Item`**: 型変数経由で関連型を名指すときは、`#Trait` で関連型の出どころを明示する。これは値メソッドの `a#P.foo()` と同じ「源の選択」です。`T.Item` は、`T` の制約集合から `Item` を持つトレイトが**一意に定まる場合だけ**の短縮形です。一意でなければ `T.Item` は曖昧エラーになり、`T#Parser.Output` / `T#Generator.Output` のように正規形で書き分ける。
+- **外部からの射影の正規形は `T#Trait[Args].Item`**: 型変数経由で関連型を名指すときは、`#Trait` で関連型の出どころを明示し、trait が位置型引数を持つならその **全位置引数を必ず** `[...]` に書く。これは値メソッドの `a#P.foo()` と同じ「源の選択」であり、さらに trait instance を一意にする指定である。引数なし trait は `T#Iterator.Item` のように `[]` を省く。`T#Convert.Output` のように parameterized trait の引数を省く形は、たとえ現在の conformance が一つだけでも reject する（後から別 instance が加わって意味が変わるため）。関連型束縛 `Item = X` は出力を検査する制約であり、射影の instance 選択には書かない。`T.Item` は、`T` の制約集合から **完全な trait instance と `Item`** が一意に定まる場合だけの短縮形である。
 
 ```plew
 fn first[T](it: T) -> Optional[T.Item] where T: Iterator {   // T.Item は T#Iterator.Item の短縮
@@ -120,11 +120,21 @@ fn pair[T](x: T) -> (parsed: T#Parser.Output, generated: T#Generator.Output)
 }
 ```
 
+```plew
+trait Convert[From] { type Output }
+
+fn decode[T](value: T) -> T#Convert[String].Output
+    where T: Convert[String]
+{ /* ... */ }
+
+// `T#Convert.Output` はエラー: Convert の instance が未指定。
+```
+
 関連型の射影は、メソッド解決とは名前空間が別ですが、曖昧さの扱いは同じです。型自身の inherent メソッドがあればベアの `x.foo()` はそれを既定にでき、トレイト由来の同名メソッドは `x#P.foo()` で選べます。一方、関連型には inherent privileged に相当する実体メンバが無いので、同名関連型が複数あれば `T#Trait.Name` で源を明示します。`via` で `fn bar() via foo` と束ねた場合は、要求名 `bar` もベアの呼び名として加わります（後述）。
 
 #### トレイト名の `[...]`（型引数と関連型束縛）
 
-トレイト名のあとの `[...]` には、**位置型引数**（`Add[Vec]`）と**関連型束縛**（`Iterator[Item = Foo]`）を書けます（Rust の `Trait<Arg, Assoc = T>` と同形で、記号だけ `[]`）。両者は混在可。supertrait や `where` 句のトレイト制約で使えます。
+トレイト名のあとの `[...]` には、**位置型引数**（`Add[Vec]`）と**関連型束縛**（`Iterator[Item = Foo]`）を書けます（Rust の `Trait<Arg, Assoc = T>` と同形で、記号だけ `[]`）。両者は混在可。supertrait や `where` 句のトレイト制約に加え、関連型射影の trait instance（`T#Add[Vec].Output`）でも使えます。射影では位置型引数だけが instance を選び、関連型束縛は書けません。
 
 ```plew
 fn sum[T](it: T) -> I32 where T: Iterator[Item = I32] { /* ... */ }   // 関連型を束縛

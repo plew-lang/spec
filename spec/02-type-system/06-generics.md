@@ -52,7 +52,7 @@ val n = parse[I32](text: input)   // 型引数 I32 を明示
 
 ## Where 句
 
-型パラメータへの制約を表現します。各述語は **`型: 制約`** の形です（`T: Eq + Format`、関連型射影への制約 `T#Iterator.Item: Format` も書けます）。関連型射影は [トレイト](08-traits.md#関連型associated-type) の通り、正規形 `T#Trait.Item` を使い、`T.Item` は源トレイトが一意な場合だけの短縮です。
+型パラメータへの制約を表現します。各述語は **`型: 制約`** の形です（`T: Eq + Format`、関連型射影への制約 `T#Iterator.Item: Format` も書けます）。関連型射影は [トレイト](08-traits.md#関連型associated-type) の通り、正規形 `T#Trait[Args].Item` を使います。trait が位置型引数を持つなら `Args` は必須で、引数なしなら省けます。`T.Item` は完全な trait instance が一意な場合だけの短縮です。
 
 ```plew
 fn func[T](param: T) where T: Eq + Format {
