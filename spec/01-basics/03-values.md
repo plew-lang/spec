@@ -196,8 +196,10 @@ match w.upgrade() {                      // Optional[Ref[T]]
 同名の `val`/`mut val` を**再宣言できます**（Rust と同じ・無制限）。再宣言は代入ではなく**新しい束縛**で、型も可変性も変えてよく、それ以降 `name` は**レキシカルに直近の宣言**を指します。外側スコープの名前を内側で覆う（shadowing）こともできます。
 
 ```plew
+import @Std/Core with { panic }
+
 val config = load()                 // Optional[Config]
-guard Optional.Some(value: val config) = config { panic "missing" }
+guard Optional.Some(value: val config) = config { panic("missing") }
 // 以降 config は Config（元の Optional は退役）
 
 val raw = read()                    // Bytes

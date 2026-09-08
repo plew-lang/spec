@@ -100,7 +100,7 @@ val result = match expression {
 - **`Bool`**：`true`／`false` の両方。
 - **ワイルドカード `_` と捕捉束縛**：残り全部を受けます。`_ => …`（値を捨てる）か `val x => …`（残りを `x` に束縛）。整数・`String` など**全値を列挙できない型は `_`（または捕捉束縛）が必須**です。
 
-アームは**上から順に試し、最初に一致したアームだけ**を実行します（C のような fall-through は無く、`break` も不要）。先行アームで完全に覆われて**到達不能になったアームは警告**します（Rust 同様）。本体が発散するアーム（`_ => panic "unreachable"` など）もパターンはカバーに数えるので、「論理上起きないはず」を明示的に落とすのに使えます。
+アームは**上から順に試し、最初に一致したアームだけ**を実行します（C のような fall-through は無く、`break` も不要）。先行アームで完全に覆われて**到達不能になったアームは警告**します（Rust 同様）。本体が発散するアーム（`_ => { panic("unreachable") }` など）もパターンはカバーに数えるので、「論理上起きないはず」を明示的に落とすのに使えます。
 
 > `match` アームに**ガード（`if` 条件）は持ちません**。絞り込みは「束縛してからネストした `match`」か、`match` の前段の `if`／`guard`（[条件チェーン](#条件チェーン束縛つき条件)）で行います。これにより網羅性は**純粋に構造的**に判定でき、Rust の「ガード付きアームは網羅に数えない」という例外規則が要りません。
 
@@ -208,32 +208,38 @@ guard Optional.Some(value: val data) = maybeData && data.isValid() {
 // ここでは data が使用可能
 ```
 
-## panic と発散
+<a id="panic-と発散"></a>
 
-`panic "メッセージ"` はプログラムを停止させる**文**です（`return`/`break` と同じく、その先へ進まない＝発散する制御フロー）。回復可能な失敗には使わず（それは `Result`/`try`）、**回復不能なバグ**を即座に・大きな声で落とすために使います。catch はできません。
+## 発散する関数と panic
+
+正常に呼び出し元へ戻らない関数は [`diverge fn`](../01-basics/04-functions.md#diverge-fn--正常-return-しない関数) と宣言します。これは `return`/`break` と同じく、その先へ進まない制御フローであり、呼び出しは任意の期待型の位置に置けます。回復可能な失敗には使わず（それは `Result`/`try`）、回復不能な不変条件違反だけを loud に停止します。catch はできません。
+
+`panic` は `@Std/Core` が公開する `diverge fn panic(message~: String)` という**通常の関数**です。キーワードでも lang item でもないため、使う側は明示的に import します。
 
 ```plew
+import @Std/Core with { panic }
+
 guard Optional.Some(value: val config) = maybeConfig {
-    panic "config is missing"   // guard 本体は発散する必要がある → panic で満たす
+    panic("config is missing")   // guard 本体は発散する必要がある
 }
 
 val config = match maybeConfig {
     Optional.Some(value: val v) => v
-    Optional.None                  => { panic "config is missing" }  // 発散アーム
+    Optional.None => { panic("config is missing") }  // 発散アーム
 }
 ```
 
 - メッセージは診断用の `String`（文字列展開可）。型付きの値は運ばない。
-- **`panic` は abort＝即座にプロセスを停止し、スタックを巻き戻さない**。したがって**`deinit` は走らない**。catch できない以上、巻き戻しても回復はできず「死ぬまでの掃除」にしかならない上、`panic` は不変条件が壊れた状態なので、そこでユーザーコード（`deinit`）を走らせると二次災害（壊れたデータの書き込み・二重 panic）を招く。OS 管理資源（メモリ・ファイルディスクリプタ・ソケット等）は OS が回収するが、ユーザー定義の意味的 cleanup は保証しない。`deinit` の「決定的資源解放」契約は**正常終了パス**（スコープ離脱・`return`・`try`/`Result` でのエラー伝播）で保証されるもので、`panic` はその契約の外にある明示的な脱出口。失敗し得るが後始末したい処理は `panic` ではなく `Result`＋明示 flush で書く。
+- **`panic` は abort＝即座にプロセスを停止し、スタックを巻き戻さない**。したがって**`deinit` は走らない**。catch できない以上、巻き戻しても回復はできず「死ぬまでの掃除」にしかならない上、`panic` は不変条件が壊れた状態なので、そこでユーザーコード（`deinit`）を走らせると二次災害を招く。OS 管理資源（メモリ・ファイルディスクリプタ・ソケット等）は OS が回収するが、ユーザー定義の意味的 cleanup は保証しない。`deinit` の「決定的資源解放」契約は**正常終了パス**（スコープ離脱・`return`・`try`/`Result` でのエラー伝播）で保証されるもので、`panic` はその契約の外にある明示的な脱出口。失敗し得るが後始末したい処理は `panic` ではなく `Result`＋明示 flush で書く。
   > 実装：unwind テーブル／landing pad を持たず trap 一発（Rust の `panic = "abort"`・Swift の `fatalError`/`precondition` trap と同じ）。「死ぬ前にログだけ吐く」等が要れば、将来 unwind ではなく atexit 風フックとして additive に足せる。
-- **式ではない**ので、式の位置には置けない（`match x { None => panic "..." … }` のように `guard`/`match` を使う）。
-- **発散規則**：全経路が `panic`/`return`/`break`/`continue` で抜けるブロックは値を生まないので `give` が不要で、`if`/`match` のアームなどで**任意の期待型と適合**する（式全体の型は発散しないアームから決まる）。
-- `spawn` スレッド内の panic は**プロセス全体を停止**する。スレッド単位で扱いたい失敗は `Result` を返して `join()` 経由で受け取る（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)）。
+- コンパイラ自身が発する 0 除算・範囲外・overflow 等の停止は、内部の `Panic(message)` 操作で表す。これは source の `panic` 名を解決した結果ではなく、同じ abort 挙動を backend に伝える実装上の操作である。
+- **発散規則**：当該の式・ブロック領域から先へ制御が到達しない経路だけが、値を生まない発散として任意の期待型と適合する。解決済み callee が `diverge fn` である呼び出しと関数からの `return` はこの条件を満たす。`break`／`continue` は enclosing loop 内の局所 edge であり、外側の関数・式を自動では発散させない。特に値を返す `loop` の `break value` はその loop の値を作る。`if`/`match` の発散アームで `give` が不要なのは、そのアームから当該式の後続へ到達しないときだけである。
+- `spawn` スレッド内の `panic` は**プロセス全体を停止**する。スレッド単位で扱いたい失敗は `Result` を返して `join()` 経由で受け取る（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)）。
 
 ## assert ── 条件付き panic
 
-`assert(x > 0)` は条件が偽のとき [`panic`](#panic-と発散) する**通常の関数**です（真なら何もしない・戻り `()`）。回復不能なバグ＝**満たされて当然の不変条件**を、破れた瞬間に大きな声で落とすために使います。診断メッセージは任意引数：`assert(x > 0, message: "x must be positive")`。
+`assert` は `@Std/Core` が公開する、任意の診断 message を取れる通常の `fn` です。条件が偽のとき内部で [`panic`](#発散する関数と-panic) しますが、`panic` を利用側が import している必要はありません。`assert(x > 0)` は真なら何もしない・戻り `()`。回復不能なバグ＝**満たされて当然の不変条件**を、破れた瞬間に大きな声で落とすために使います。
 
 - **常時 ON（全ビルド共通）**。最適化レベルで意味論は変わりません ── [整数オーバーフロー](../01-basics/02-basic-types.md#整数の実行時セマンティクスオーバーフロー)・0 除算・NaN 比較の panic と同じ「リリースでだけ落ちないバグを作らない」方針（観測挙動は唱えた意味から逸れない）。Rust の `assert!`／Swift の `precondition` に対応します。
-- 内部は `panic` ゆえ **abort**（巻き戻さない・`deinit` は走らない・catch 不可）。ただし `panic` と違い**発散文ではなく**、条件が真なら素通りする**ただの関数呼び出し**です（構文の特別扱いは不要）。構文が参照しない＝**lang item ではない**ので、`print` 同様 `import` が要ります。
+- 内部は `panic` ゆえ **abort**（巻き戻さない・`deinit` は走らない・catch 不可）。ただし `panic` と違い**常に発散する関数ではなく**、条件が真なら素通りする**ただの関数呼び出し**です（構文の特別扱いは不要）。構文が参照しない＝**lang item ではない**ので、`print` 同様 `import` が要ります。
 - **`debugAssert`（最適化ビルドで除去される段）は当面持ちません＝additive 保留**。重い不変条件チェックを本番で外したい需要はありますが、除去段は「観測挙動が唱えた意味から逸れない」方針と**唯一緊張する部分**（壊れたプログラムの loud 化を遅らせる＝リリースでだけ素通りする）。入れるなら *呼び出し位置で除去段と分かる別名* `debugAssert` ＋ ビルドプロファイル定義を伴って後から非破壊で足します。常時チェックが既定で、除去は明示的に opt-in。

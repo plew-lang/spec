@@ -20,7 +20,7 @@ async fn main() {
 ```
 
 - **戻り型は `Promise[T]` と明示して書き**、本体の `return e`（`e: T`）はコンパイラが `Promise[T]` に包みます（TypeScript と同じ）。`await` はその `Promise[T]` を `T` に開きます。`Promise[T]` はイベントループに所属するため、`T` が sendable でも **常に nonsendable** です。`Promise[T]` は JavaScript の Promise と同じく同一イベントループ上の完了を共有するコピー可能 handle であり、`await` は handle を消費しません。同じ `Promise[T]` は複数回 `await` でき、完了後は completion cell の結果を各 `await` ごとにコピーして返します（v1 の `T` はコピー可能型に限定）。
-- 戻り型を省略した `async fn`（`main` など）は、値を返さない `Promise` を返します。
+- 戻り型を省略した `async fn`（`main` など）は、値を返さない `Promise` を返します。`async diverge fn` は禁止する。task の非完了と、同期呼び出しが正常 return しないことは別の意味論なので、必要になれば別途定義する。
 - **`async` は単一スレッド上の協調的中断**で、別スレッドは起きません。所有権・借用は同期コードと同じに効きます（`unique` 値を await を跨いで保持してもよい）。
 
 ### async メソッドと self
@@ -41,7 +41,7 @@ v1 では **`Promise[T]`/`JoinHandle[T]` を含むコアの generic 型の型引
 
 ## メモリ管理（ARC）
 
-- **ARC（自動参照カウント）で管理**：通常実行中にスコープを抜けて最後の所有者／共有参照が消えると**即座に**解放され、`deinit` が走る（決定的破棄＝ファイル・ソケット等の資源解放に使える）。ただし**`panic` 時は abort で巻き戻さないので `deinit` は走らない**（OS 管理資源は OS が回収するが、ユーザー定義の意味的 cleanup は保証しない・[制御構造 § panic と発散](../03-expressions/11-control-flow.md#panic-と発散) 参照）。決定的破棄が保証されるのは通常実行中の正常経路（スコープ離脱・`return`・`try`/`Result` 伝播・再代入など）だけで、プロセス終了時のトップレベル/`assoc val` 所有根には保証しない。
+- **ARC（自動参照カウント）で管理**：通常実行中にスコープを抜けて最後の所有者／共有参照が消えると**即座に**解放され、`deinit` が走る（決定的破棄＝ファイル・ソケット等の資源解放に使える）。ただし**`panic` 時は abort で巻き戻さないので `deinit` は走らない**（OS 管理資源は OS が回収するが、ユーザー定義の意味的 cleanup は保証しない・[制御構造 § 発散する関数と panic](../03-expressions/11-control-flow.md#発散する関数と-panic) 参照）。決定的破棄が保証されるのは通常実行中の正常経路（スコープ離脱・`return`・`try`/`Result` 伝播・再代入など）だけで、プロセス終了時のトップレベル/`assoc val` 所有根には保証しない。
 - **循環は `WeakRef` / `WeakMutableRef` で**：参照カウントは循環を回収しないので、親子の逆リンク等は弱参照で断ち切る。**循環が生じ得るのは共有参照グラフだけ**（値世界＝`Array`/`String`/`Dictionary`・[自動箱化された再帰値型](../02-type-system/05-structs-enums.md#再帰的な値型)は構造上つねに木／DAG）なので、純粋 ARC は値世界を取りこぼさない。
   > **将来 additive：循環の自動回収。** 共有参照グラフは小さく隔離され（trace 対象は `Ref`/`MutableRef` ボックス＋`mut val` 参照キャプチャしたクロージャだけ）、単一イベントループではターン間が天然のセーフポイントになり、フルマネージドなので、ARC の上に **共有参照グラフ限定のサイクルコレクタ**（Bacon–Rajan の trial deletion・CPython/PHP で実証）を idle 実行で非破壊に足せる。実スレッドを越え得る `Ref[T]`（`T: sendable`）の cell は atomic refcount 対象になり得るため、回収実装は refcount mode と同じく allocation の所属・共有可能性を内部で区別する。**ゴミ循環を検出したときの挙動**は、(1) retain path 付きで **loud に報告**（dedup・診断フック経由・**全ビルド共通＝release 含む**＝`assert`/overflow panic と同じく「意味論を変えるビルドを持たない」原則の一貫）、(2) **メモリを回収**、(3) **循環メンバの `deinit` は走らせない**。`deinit` の決定的契約は正常路（スコープ離脱・`return`・`try`/`Result` 伝播・再代入など）のみで保証し、`panic`・`Process.exit`・リークした循環・process/runtime teardown のトップレベル/`assoc val` root は契約外として deinit を飛ばす（[panic と発散](../03-expressions/11-control-flow.md#panic-と発散) と対称）。**deinit の有無で挙動を分けない**ので「構造体に `deinit` を足したら循環がリークし始める」崖は生じず、循環メンバの deinit が予期しない時刻に走る驚きも生じない（走らないだけ）。重大度は値の嘘ではない（資源の無駄＋deinit skip）ので panic でなくログ。手動の弱参照は「正しさのため必須」から「決定性・性能の opt-in」へ格下げされ、共有参照で `File` 等を意図せず循環に閉じ込めた場合はメモリは回収され fd は閉じず loud に報告される（直し方は弱参照で輪を切る→正常路で deinit が走る）。実装順は reporter 先行→回収追加（どちらも非破壊）。
 

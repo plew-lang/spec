@@ -3,7 +3,7 @@
 ## 関数宣言
 
 ```plew
-export async fn functionName[T, U](
+export fn functionName[T, U](
     arg1: Type1,
     inout arg2: Type2,
     arg3: Type3 = defaultValue
@@ -12,7 +12,7 @@ export async fn functionName[T, U](
 }
 ```
 
-引数のモード（`borrow`／`inout`／`move`・コピー可能は既定で by-value）、`async fn`／`spawn fn`、型引数の能力マーカー（`allowUnique`／`sendable`）は [値・変数・所有権](03-values.md)・[非同期処理とメモリ管理](../04-execution/14-concurrency.md)・[ジェネリクス](../02-type-system/06-generics.md) を参照。
+引数のモード（`borrow`／`inout`／`move`・コピー可能は既定で by-value）、`async fn`／`spawn fn`／`diverge fn`、型引数の能力マーカー（`allowUnique`／`sendable`）は [値・変数・所有権](03-values.md)・[非同期処理とメモリ管理](../04-execution/14-concurrency.md)・[ジェネリクス](../02-type-system/06-generics.md) を参照。
 
 名前付きの `fn` 宣言は**呼び出せる宣言**であって、第一級の関数値ではありません。裸の関数名を値として読めず、関数値が必要なら[無名関数（クロージャ）](#無名関数クロージャ)で明示的に包みます。
 
@@ -23,11 +23,30 @@ val f = double                                      // エラー: 名前付き�
 val g = fn(value: I32) -> I32 { return double(value: value) }  // OK
 ```
 
+### `diverge fn` ── 正常 return しない関数
+
+`diverge fn` は、正常には呼び出し元へ戻らないことを**宣言で明示する**修飾子です。`panic` や終了処理を構文・隠れた intrinsic として特別扱いせず、呼び出し先のこの契約だけから制御フローを決めます。
+
+```plew
+import @Std/Io with { eprint }
+import @Std/Process with { ExitCode, exit }
+
+diverge fn fatal(message~: String) {
+    eprint("fatal: {message}\\n")
+    exit(code: ExitCode.failure)
+}
+```
+
+- free 関数・読み借用メソッド・関連関数・trait requirement にだけ指定できる。`-> ReturnType` は書けない。許可形は `diverge fn` と `assoc diverge fn` のみで、`inout diverge fn`／`move diverge fn` は不可である。呼び出し元へ戻らないため writeback／消費後の accessibility は観測できず、意味を持たない mode を増やさない。`async`／`spawn` との併用も不可。trait requirement とその `impl` の宣言は一致しなければならない。selector／overload の識別子ではないため、同じ selector に通常の `fn` と `diverge fn` を重ねて宣言できない。
+- 本体は通常の `return` または素通りで完了できない。各経路は、解決済み callee が `diverge fn` である呼び出し、または到達可能な `break` を持たない `loop { … }`／`while true { … }` で終わる必要がある。呼び出しは任意の期待型の位置に置ける。
+- factory・クロージャ・関数型には指定できない。Plew に一般の `Never` 型はなく、`Optional[Never]` のような型引数、field／引数／associated type／関数型の戻り位置にも現れない。
+- `async diverge fn` と `spawn diverge fn` は当面禁止する。非同期 task の非完了・worker の寿命は、同期的な「呼び出し元へ戻らない」とは別の意味論として定義する。
+
 ## 戻り値（`return` は明示）
 
 関数は**末尾式を暗黙に返しません**（Rust と異なる）。値を返すには `return` を書きます。`give` は[ブロック式](../03-expressions/11-control-flow.md)（`if`／`match` のアームや `val x = { … give v }`）専用で、関数本体の戻り値にはなりません。
 
-戻り型を持つ（`()` 以外の）関数は、**全ての経路で `return`／`panic`／発散して抜けなければコンパイルエラー**です（末尾に到達して値を返さない「素通り」は、未初期化の値を黙って返すことになるため loud に拒否します。[発散規則](../03-expressions/11-control-flow.md)に従い、`return`／`panic`・両枝が発散する `if`/`else`・全アームが発散する網羅 `match`・脱出 `break` のない `while true` は「発散」と見なされます）。
+戻り型を持つ（`()` 以外の）関数は、**全ての経路で `return` または発散して抜けなければコンパイルエラー**です（末尾に到達して値を返さない「素通り」は、未初期化の値を黙って返すことになるため loud に拒否します。[発散規則](../03-expressions/11-control-flow.md)に従い、`diverge fn` の呼び出し・両枝が発散する `if`/`else`・全アームが発散する網羅 `match`・脱出 `break` のない `while true` は「発散」と見なされます）。
 
 ```plew
 fn f(e: E) -> U64 {

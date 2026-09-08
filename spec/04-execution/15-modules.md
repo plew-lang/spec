@@ -26,7 +26,7 @@ mut val requestCount = 0       // トップレベル可変変数
 
 - 初期化済み → その値
 - 未初期化 → 「初期化中」に印し、初期化子を実行。**その式が別のトップレベル値を読むと、その読み取りが相手を再帰的に force する** ── これだけで依存順が自動的に正しくなる（関数呼び出し越しの推移依存も、実行が辿るので静的解析不要）。
-- 初期化中（への再入）→ **循環初期化。起動時に [`panic`](../03-expressions/11-control-flow.md#panic-と発散)**（関わった名前を診断に出す）。コンパイル時ではなく起動時のランタイムエラー。
+- 初期化中（への再入）→ **循環初期化。起動時に [`panic`](../03-expressions/11-control-flow.md#発散する関数と-panic)**（関わった名前を診断に出す）。コンパイル時ではなく起動時のランタイムエラー。
 
 値が「初期化済み」になって初めて値として読めるため、**半初期化状態は決して観測されません**（読めば必ず完全な値か、await か、循環 panic のいずれか）。
 
@@ -55,17 +55,24 @@ Plew が**常に保証**するもの：①メモリ安全（半初期化を観�
 ```plew
 fn main() { … }                       // 同期
 async fn main() { … }                 // await を使う（同期は無税の特殊ケース）
-fn main() -> Result[(), AppError] {   // Result を返すと main 内で try が使える
-    val cfg = try loadConfig()
-    run(config: cfg)
-    return <Result.Ok value=() />
-}
 ```
 
 - **`async` は任意**：`fn main` と `async fn main` の両方が valid。実行モデルは常にイベントループなので、同期 `main` は await ゼロの特殊ケース（[同期プログラムは無税](#トップレベル-await-と並行初期化)）。
-- **戻り値は `()` か `Result[(), E]`**。`Result` を返すと **`main` 内で [`try`](../03-expressions/13-error-handling.md) が使え**、`Err` のときランタイムが**エラーを表示して非ゼロ終了**します（`Termination` 相当の lang トレイト経由）。これは通常の `return` 経路なので、`main` 内の local は通常どおり破棄されます。明示的な終了コードは標準ライブラリの `Process.exit(code:)`（発散）。
-- **`Process.exit(code:)` は即時終了**：Rust `std::process::exit` と同じ non-unwinding termination で、現在の stack や他 worker stack を巻き戻さず、local `deinit`、worker drain、join/drop の完了先、トップレベル/`assoc val` 所有根の `deinit` を保証しません。clean shutdown が必要なら、既に破棄すべき local が残っていない既知地点でだけ呼ぶか、`main` から `Result` を返す通常経路、明示 `close`/`shutdown`、with-style API を使います。
-- **引数・環境は `main` の仮引数では受け取らず、標準ライブラリ経由**で取ります（`import @Std/Process` して `Process.args() -> Array[String]`／`Process.env` 等）。`print`/`Random` と同じく「ambient なプロセス能力を import 越しに明示取得」する形に揃え、出どころを可視に保つ（`main` のシグネチャを単一にし、ランタイムが複数 main 形を魔法認識しなくて済む）。`Process` は lang item ではないので import が要る。
+- **entry signature は厳密に二つだけ**：非 generic・receiver 無し・引数無し・明示戻り型無し・`extern`／`export`／`diverge`／`spawn` 無しの `fn main()` または `async fn main()`。`main` 本体の戻り値は常に `()` で、`Result` を含む終了値は返せず、したがって `main` で直接 [`try`](../03-expressions/13-error-handling.md) は使えません。失敗し得る処理は `Result` を返す helper に閉じ、`main` は `match` して正常 return、`panic`、または明示 `exit` を選びます。ランタイムは `Err` を暗黙表示したり非ゼロ終了へ変換したりしません。`async fn main` も source 本体は `()` を返し、Promise の扱いは非同期実行モデルに従います。
+- **引数・環境は `main` の仮引数では受け取らず、標準ライブラリ経由**で取ります。`@Std/Process.args() -> Array[String]` は argv0 を含まず、渡された空引数は空の `String` として保持します。runtime は**全 Plew トップレベル初期化より前**に argv を UTF-8 として検証し、変換できない引数があれば user code を一切実行せず起動を拒否します。埋め込み host が argv を渡さない場合は空配列を使い、渡す各要素は host が UTF-8 `String` として供給します。配列の長さ・添字アクセスを使うため `argCount`／範囲外で空文字列を返す `argAt` は持ちません。`print`/`Random` と同じく「ambient なプロセス能力を import 越しに明示取得」する形に揃え、出どころを可視に保つ（`main` のシグネチャを単一にし、ランタイムが複数 main 形を魔法認識しなくて済む）。`Process` は lang item ではないので import が要る。コンパイラ自身の resource 探索も argv0 に依存してはならない。
+
+#### `@Std/Process` の終了コード
+
+```plew
+import @Std/Process with { ExitCode, exit }
+
+exit(code: ExitCode.failure)
+exit(code: <ExitCode.status code=42U8 />)
+```
+
+`ExitCode` は portable な不透明型である。`ExitCode.success` は要求 status `0U8`、`ExitCode.failure` は要求 status `1U8`、特定の status は `U8` だけを受ける `<ExitCode.status code=… />` で作る。host OS の終了 status 表現（Unix の low 8 bits 等）は runtime の責務であり、API に `I64` を露出する理由にはならない。`exit(code: ExitCode)` は `@Std/Process` が公開する `diverge fn` である。
+
+- **`exit` は即時終了**：bin では Rust `std::process::exit` と同じ non-unwinding termination で、現在の stack や他 worker stack を巻き戻さず、local `deinit`、worker drain、join/drop の完了先、トップレベル/`assoc val` 所有根の `deinit` を保証しません。WASM/JS 等の埋め込みでは host process/page を終了させず、Plew runtime instance を同じ非巻き戻し規則で停止し、要求した `U8` status を host へ終了結果として返します。host が OS status へ完全に写せなくても、Plew 側で要求した status の意味は失いません。clean shutdown が必要なら、既に破棄すべき local が残っていない既知地点でだけ呼ぶか、通常 return、明示 `close`/`shutdown`、with-style API を使います。
 - **ランタイムの寿命**：worker の完了とは spawn 本体の `give`/`return` だけでなく、worker 自身のイベントループが drain してスレッドが終了したことを指します。`main` が返った後も root loop の通常 work と join/drop の完了先を処理し、detached を含む**すべての worker が完了するまで**生存します。root work が静穏になり全 worker が終了し、全イベントループが drain した時点でプロセスを終了します。プロセス終了時にトップレベル/`assoc val` 所有根の `deinit` は保証せず、終了時専用の finalization work も作りません。detached は暗黙キャンセルされず、結果の破棄継続は処理されるまで所有側ループの pending work です。よって UI アプリの `main` は「DOM にマウントして return」でよく、イベント待ちでループが生き続けます。CLI は仕事して return → ループ空 → 終了。サーバは listen して return → 接続待ちで生存。
 - **ライブラリ/埋め込みの寿命単位**：bin ではプロセス寿命、WASM/JS などに export 面だけを晒す library では host が作った Plew runtime instance の寿命を「プロセス寿命」に相当する単位として扱います。host の unload / GC / dispose / page teardown は user `deinit` を保証する言語上の所有者喪失 edge ではありません。明示的に片付けたい資源は export API で close/shutdown を公開するか、呼び出し側が通常実行中に所有者を失う形へ置きます。
 - **パッケージは lib 面（`_.pw` の export）を常に持ち、`main` を持つ各ファイルが bin**（実行可能エントリ）＝**1 パッケージ＝1 lib ＋ N bin**（Rust の lib+bin モデル）。公開する bin は manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で列挙し、`plew run @Pkg:Name` で呼びます（→ [ビルド・実行](#ビルド実行)）。ライブラリ（他パッケージや JS から呼ぶ WASM）は bin ゼロ＝export 面だけを晒します。**複数 lib が要るならワークスペースの members**（bin は 1 パッケージ内に複数置ける）。
@@ -416,7 +423,7 @@ impl Parser {
 
 - **発見はコンパイル対象に含まれる `test` ブロックの無条件全収集**。参照ベース（Zig の `refAllDecls` 流）にはせず、「**書いたテストは必ず走る**」を保証します（参照漏れで静かにスキップされる trap を避ける）。
 - **production ビルドからは `test` ブロックごとリンク除外**。通常コードは test／production で 1 バイトも変わりません（Rust の `cfg(test)` のように通常コードを差し替えるビルドモードは持たない＝意味論を変えるビルドは無い・変えるのはエントリ／リンク対象だけ）。
-- テストの失敗は**そのテストを失敗扱いにしてランナーは残りを続行**します（`assert` の [`panic`](../03-expressions/11-control-flow.md#panic-と発散)＝プロセス停止とは別の失敗チャネル。正確な機構はランナー設計の課題）。
+- テストの失敗は**そのテストを失敗扱いにしてランナーは残りを続行**します（`assert` の [`panic`](../03-expressions/11-control-flow.md#発散する関数と-panic)＝プロセス停止とは別の失敗チャネル。正確な機構はランナー設計の課題）。
 
 ### アサーション（`@Std/Testing`）
 
