@@ -293,7 +293,9 @@ get-modify-set が**意味モデル**です。コンパイラは、(1) バッフ
 
 `inout` の長期 write access は、呼び出し先の本体から同じ storage を別名で読む／書く場合にも適用します。これは Swift と同じく単一スレッド内の memory exclusivity であり、並行性やデータ競合とは別の規則です。
 
-この節で扱うのは `inout` の write access と ambient read/write の衝突です。`unique` 値の `borrow` は所有権・借用解析の対象であり、Swift 風の runtime active access trap の対象ではありません。`borrow` 中に同じ `unique` storage を `move` / `inout` / drop できないことは、[unique](#uniqueコピー不可型) の静的な借用規則として検査します。
+この節で扱うのは `inout` の write access と読み借用・ambient read/write の衝突です。直接所有する `unique` 値の `borrow` は所有権・借用解析の対象であり、実行時検査へ委ねません。`borrow` 中に同じ直接所有の storage を `move` / `inout` / drop できないことは、[unique](#uniqueコピー不可型) の静的な借用規則として検査します。
+
+一方、`Ref[T]` / `MutableRef[T]` の共有セル越しのアクセスは、`T` が `unique` でも共有セルの規則に従います。`unique` は値自体のコピーを禁じる性質であり、その値を保持する共有セルの別名参照を禁じません。読み借用と `inout` が同じセルの重なる場所に届くときは衝突です。評価済みのセル同一性と射影から静的に確定できればコンパイルエラー、実行時まで分からなければ必要な箇所で検査して panic にします。別セル・重ならないフィールド・読み借用同士は許可します。セルの寿命保持だけでは、内容へのアクセス競合を解消したことにはなりません。共有セルからの `move` は引き続き許可しません。
 
 ```plew
 mut val stepSize = 1
@@ -318,7 +320,7 @@ mut val a = 1
 add(x: inout a, y: a)    // OK: y は呼び出し前 snapshot
 ```
 
-Plew の実装は Swift 風の全面的な `begin_access` / `end_access` 計装に限定しません。必要十分な条件は、active な `inout` place と、同じ storage に到達し得る ambient access の交差を漏らさないことです。`unique borrow` の衝突はこの runtime trap 設計へ含めず、所有権解析で静的に扱います。コンパイラは次の規則で同時アクセスを防ぎます。
+Plew の実装は Swift 風の全面的な `begin_access` / `end_access` 計装に限定しません。必要十分な条件は、active な `inout` place と、同じ storage に到達し得る ambient access の交差を漏らさないことです。直接所有する `unique` の借用衝突は所有権解析で静的に扱い、共有セル越しの借用は内容型のコピー可否によらずセルのアクセス検査に含めます。コンパイラは次の規則で同時アクセスを防ぎます。
 
 - 静的に同じ storage と証明できるものはコンパイルエラー。
 - `Ref` の同一セル・closure capture・動的 dispatch など、実行時まで同一性が分からないものは、実際の ambient access が起きる地点で active `inout` place と比較して panic。
