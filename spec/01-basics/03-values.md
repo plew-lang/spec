@@ -324,7 +324,7 @@ Plew の実装は Swift 風の全面的な `begin_access` / `end_access` 計装�
 
 - 静的に同じ storage と証明できるものはコンパイルエラー。
 - `Ref` の同一セル・closure capture・動的 dispatch など、実行時まで同一性が分からないものは、実際の ambient access が起きる地点で active `inout` place と比較して panic。
-- effect が不明な FFI / host call / 未注釈の外部境界は、active `inout` と同時に使う場所では conservative に拒否します。外部境界の access effect 注釈は将来の additive な拡張です。
+- 明示した `extern(c)` 境界では、外部実装のeffectが不明という理由だけでactiveな `borrow` / `inout` との併用を拒否しません。外部コードによる別名アクセス・破棄・ポインタ保持がPlewの借用と寿命の規則を破らない責任は、FFI利用側が負います。詳細は[FFIの安全性と借用の責任](../04-execution/15-modules.md#ffiの安全性と借用の責任)を参照してください。Plew内の既知の衝突検査は維持し、FFI呼び出しを副作用なしとは扱いません。
 
 copy-in/copy-out や get-modify-set の書き戻し自体は、その `inout` access の一部として順序づけられます。書き戻しを別の ambient write として扱って自己衝突させてはいけません。ただし、書き戻しのために実際に呼ばれる setter / `IndexSet` / `deinit` の本体が別の storage に read/write する場合、その effect は通常の呼び出しと同じく検査対象です。
 
