@@ -2,7 +2,7 @@
 
 ## モジュールとトップレベル
 
-Plew のすべての定義は、いずれかのモジュール（**1 ファイル = 1 モジュール**、`.pw`）の**トップレベル**に属します。**ユーザーがグローバル（ambient）な定義 ── どこからでも `import` 無しに見える名前 ── を作る手段はありません**。他モジュールの名前を使うには必ず `import` し、出どころが常に辿れます（唯一 ambient なのは言語自身が提供する[言語アイテム](#言語アイテムは常にスコープにあるimport-不要)で、そこにユーザーは足せません）。
+Plew のすべての定義は、いずれかのモジュール（**root ファイル＋推移的な part 全体 = 1 モジュール**）の**トップレベル**に属します。**ユーザーがグローバル（ambient）な定義 ── どこからでも `import` 無しに見える名前 ── を作る手段はありません**。他モジュールの名前を使うには必ず `import` し、出どころが常に辿れます（唯一 ambient なのは言語自身が提供する[言語アイテム](#言語アイテムは常にスコープにあるimport-不要)で、そこにユーザーは足せません）。
 
 トップレベルに書けるもの：
 
@@ -18,7 +18,7 @@ mut val requestCount = 0       // トップレベル可変変数
 
 ### トップレベル初期化と実行順序
 
-トップレベル `val`/`mut val`・`export val`・[`assoc val`](../02-type-system/07-methods-impl.md)（型の静的値）は、**プログラム起動時に eager に初期化**されます。`main` 本体が動き始める前に、すべて初期化済みであることが保証されます（Swift/Rust のような「初回アクセス時の遅延初期化」ではない ── いつ走るか読めない非直感を持ち込まない）。初期化子は const に限らず**任意の実行時式**を書けます（関数呼び出し・I/O・[JSX 生成](../02-type-system/05-structs-enums.md) など）。
+トップレベル `val`/`mut val`・`pub val`・[`assoc val`](../02-type-system/07-methods-impl.md)（型の静的値）は、**プログラム起動時に eager に初期化**されます。`main` 本体が動き始める前に、すべて初期化済みであることが保証されます（Swift/Rust のような「初回アクセス時の遅延初期化」ではない ── いつ走るか読めない非直感を持ち込まない）。初期化子は const に限らず**任意の実行時式**を書けます（関数呼び出し・I/O・[JSX 生成](../02-type-system/05-structs-enums.md) など）。
 
 初期化は**プロセス全体で一度だけ**です。後から起動した spawn スレッドは独自のトップレベル状態を持たず、初期化子も再実行しません。sendable な不変値を spawn から読める場合も同じ一個の immortal な値を読み、スレッドごとのコピーは作りません。immortal は実行中の retain/release が不要なプロセス寿命 root という意味で、プロセス終了時の `deinit` やフィールド破棄は保証しません。`mut val` の現在値や nonsendable なトップレベル値も process exit では finalization されませんが、通常実行中の再代入では旧値が通常どおり drop されます。トップレベル所有根が保持する `Ref` cell とその pointee も、最後まで root から到達可能なら process exit で user `deinit` を保証しません。したがって、トップレベル/`assoc val` 所有根の終了時 finalization 順序、`deinit` の global read / global write / localReach 依存グラフ、finalization 中だけの特別な閉店モードは持ちません。外部資源やアプリケーション上の意味を持つ片付けが必要な値は、`main` の通常スコープ、明示的な `close`/`shutdown`、または with-style のライフサイクル API に置き、通常実行中の所有者喪失として `deinit` を走らせます。可変性やsendabilityで変わるのはアクセス可否だけで、初期化回数と保存場所は変わりません。
 
@@ -58,7 +58,7 @@ async fn main() { … }                 // await を使う（同期は無税の�
 ```
 
 - **`async` は任意**：`fn main` と `async fn main` の両方が valid。実行モデルは常にイベントループなので、同期 `main` は await ゼロの特殊ケース（[同期プログラムは無税](#トップレベル-await-と並行初期化)）。
-- **entry signature は厳密に二つだけ**：非 generic・receiver 無し・引数無し・明示戻り型無し・`extern`／`export`／`diverge`／`spawn` 無しの `fn main()` または `async fn main()`。`main` 本体の戻り値は常に `()` で、`Result` を含む終了値は返せず、したがって `main` で直接 [`try`](../03-expressions/13-error-handling.md) は使えません。失敗し得る処理は `Result` を返す helper に閉じ、`main` は `match` して正常 return、`panic`、または明示 `exit` を選びます。ランタイムは `Err` を暗黙表示したり非ゼロ終了へ変換したりしません。`async fn main` も source 本体は `()` を返し、Promise の扱いは非同期実行モデルに従います。
+- **entry signature は厳密に二つだけ**：非 generic・receiver 無し・引数無し・明示戻り型無し・`extern`／`pub`／`diverge`／`spawn` 無しの `fn main()` または `async fn main()`。`main` 本体の戻り値は常に `()` で、`Result` を含む終了値は返せず、したがって `main` で直接 [`try`](../03-expressions/13-error-handling.md) は使えません。失敗し得る処理は `Result` を返す helper に閉じ、`main` は `match` して正常 return、`panic`、または明示 `exit` を選びます。ランタイムは `Err` を暗黙表示したり非ゼロ終了へ変換したりしません。`async fn main` も source 本体は `()` を返し、Promise の扱いは非同期実行モデルに従います。
 - **引数・環境は `main` の仮引数では受け取らず、標準ライブラリ経由**で取ります。`@Std/Process.args() -> Array[String]` は argv0 を含まず、渡された空引数は空の `String` として保持します。runtime は**全 Plew トップレベル初期化より前**に argv を UTF-8 として検証し、変換できない引数があれば user code を一切実行せず起動を拒否します。埋め込み host が argv を渡さない場合は空配列を使い、渡す各要素は host が UTF-8 `String` として供給します。配列の長さ・添字アクセスを使うため `argCount`／範囲外で空文字列を返す `argAt` は持ちません。`print`/`Random` と同じく「ambient なプロセス能力を import 越しに明示取得」する形に揃え、出どころを可視に保つ（`main` のシグネチャを単一にし、ランタイムが複数 main 形を魔法認識しなくて済む）。`Process` は lang item ではないので import が要る。コンパイラ自身の resource 探索も argv0 に依存してはならない。
 
 #### `@Std/Process` の終了コード
@@ -74,8 +74,8 @@ exit(code: <ExitCode.status code=42U8 />)
 
 - **`exit` は即時終了**：bin では Rust `std::process::exit` と同じ non-unwinding termination で、現在の stack や他 worker stack を巻き戻さず、local `deinit`、worker drain、join/drop の完了先、トップレベル/`assoc val` 所有根の `deinit` を保証しません。WASM/JS 等の埋め込みでは host process/page を終了させず、Plew runtime instance を同じ非巻き戻し規則で停止し、要求した `U8` status を host へ終了結果として返します。host が OS status へ完全に写せなくても、Plew 側で要求した status の意味は失いません。clean shutdown が必要なら、既に破棄すべき local が残っていない既知地点でだけ呼ぶか、通常 return、明示 `close`/`shutdown`、with-style API を使います。
 - **ランタイムの寿命**：worker の完了とは spawn 本体の `give`/`return` だけでなく、worker 自身のイベントループが drain してスレッドが終了したことを指します。`main` が返った後も root loop の通常 work と join/drop の完了先を処理し、detached を含む**すべての worker が完了するまで**生存します。root work が静穏になり全 worker が終了し、全イベントループが drain した時点でプロセスを終了します。プロセス終了時にトップレベル/`assoc val` 所有根の `deinit` は保証せず、終了時専用の finalization work も作りません。detached は暗黙キャンセルされず、結果の破棄継続は処理されるまで所有側ループの pending work です。よって UI アプリの `main` は「DOM にマウントして return」でよく、イベント待ちでループが生き続けます。CLI は仕事して return → ループ空 → 終了。サーバは listen して return → 接続待ちで生存。
-- **ライブラリ/埋め込みの寿命単位**：bin ではプロセス寿命、WASM/JS などに export 面だけを晒す library では host が作った Plew runtime instance の寿命を「プロセス寿命」に相当する単位として扱います。host の unload / GC / dispose / page teardown は user `deinit` を保証する言語上の所有者喪失 edge ではありません。明示的に片付けたい資源は export API で close/shutdown を公開するか、呼び出し側が通常実行中に所有者を失う形へ置きます。
-- **パッケージは lib 面（`_.pw` の export）を常に持ち、`main` を持つ各ファイルが bin**（実行可能エントリ）＝**1 パッケージ＝1 lib ＋ N bin**（Rust の lib+bin モデル）。公開する bin は manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で列挙し、`plew run @Pkg:Name` で呼びます（→ [ビルド・実行](#ビルド実行)）。ライブラリ（他パッケージや JS から呼ぶ WASM）は bin ゼロ＝export 面だけを晒します。**複数 lib が要るならワークスペースの members**（bin は 1 パッケージ内に複数置ける）。
+- **ライブラリ/埋め込みの寿命単位**：bin ではプロセス寿命、WASM/JS などに 公開面だけを晒す library では host が作った Plew runtime instance の寿命を「プロセス寿命」に相当する単位として扱います。host の unload / GC / dispose / page teardown は user `deinit` を保証する言語上の所有者喪失 edge ではありません。明示的に片付けたい資源は 公開 API で close/shutdown を公開するか、呼び出し側が通常実行中に所有者を失う形へ置きます。
+- **パッケージは lib 面（`_.pw` の公開面）を常に持ち、`main` を持つ各ファイルが bin**（実行可能エントリ）＝**1 パッケージ＝1 lib ＋ N bin**（Rust の lib+bin モデル）。公開する bin は manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で列挙し、`plew run @Pkg:Name` で呼びます（→ [ビルド・実行](#ビルド実行)）。ライブラリ（他パッケージや JS から呼ぶ WASM）は bin ゼロ＝公開面だけを晒します。**複数 lib が要るならワークスペースの members**（bin は 1 パッケージ内に複数置ける）。
 
 ### 言語アイテムは常にスコープにある（import 不要）
 
@@ -112,7 +112,7 @@ import のルートは **3 つ**で、**先頭の記号が出どころを表し�
 | `/…` | **自前・パッケージのルート起点**（絶対） | `import /Models/User`, `import /Utils` |
 | `./` `../` | **自前・相対**（このファイルからの相対パス） | `import ./User`, `import ../Utils` |
 
-`@` の直後は**パッケージ名**で、std と外部を名前で見分けます ── **第一成分が `Std` の名前（`@Std/Http` 等）は標準ライブラリの予約**（マニフェスト束縛不要・常に利用可）で、それ以外の `@Name` はマニフェストで束縛した外部依存（→ [パッケージ](#パッケージ)）。**`@…` の `/` はパッケージ名の一部の字面**であって、パッケージ内へ潜る経路ではありません ── `@Std/Http` は「`Std` の `Http` サブモジュール」ではなく **`Std/Http` という名前の 1 パッケージ**で、外部パッケージの API はフラット（ルート `_.pw` の `export` だけ）です。対して **`/` 始まり**は自パッケージの `src/` ルートからのファイル絶対パス（→ [ルート起点の絶対パス](#ルート起点の絶対パス)）。`@` を「自分の外（名前で指す）」、`/` を「自前・ルートから（ファイル）」、`./` を「自前・ここから（ファイル）」と読めば、行頭だけで provenance が確定します。
+`@` の直後は**パッケージ名**で、std と外部を名前で見分けます ── **第一成分が `Std` の名前（`@Std/Http` 等）は標準ライブラリの予約**（マニフェスト束縛不要・常に利用可）で、それ以外の `@Name` はマニフェストで束縛した外部依存（→ [パッケージ](#パッケージ)）。**`@…` の `/` はパッケージ名の一部の字面**であって、パッケージ内へ潜る経路ではありません ── `@Std/Http` は「`Std` の `Http` サブモジュール」ではなく **`Std/Http` という名前の 1 パッケージ**で、外部パッケージの API はフラット（ルート `_.pw` の `pub` だけ）です。対して **`/` 始まり**は自パッケージの `src/` ルートからのファイル絶対パス（→ [ルート起点の絶対パス](#ルート起点の絶対パス)）。`@` を「自分の外（名前で指す）」、`/` を「自前・ルートから（ファイル）」、`./` を「自前・ここから（ファイル）」と読めば、行頭だけで provenance が確定します。
 
 ```plew
 import @Std/Http                          // 標準ライブラリ（Std/* は予約名・Std/Http で 1 パッケージ）
@@ -131,17 +131,16 @@ import ./Models with { User as Account }  // 選択的インポート
 `/` は**自パッケージの `src/` ルート起点の絶対パス**です。`import /Models/User` は、どのファイルから書いても `src/Models/User.pw` を指します（`/` 単体はルート `src/_.pw`）。深いネストで `../../../` が積み上がるのを避けるための経路で、Rust の `crate::` に相当します。
 
 - **リファクタ安定**。相対パス `../../` は *import する側*の位置をエンコードするので、どちらのファイルを動かしても壊れます。`/` は *ターゲットの同一性*（ルートからの位置）をエンコードするので、import する側を動かしても壊れません ── 出どころも `../../` より正直に固定されます（ターゲット側を動かせばパスは変わる＝位置が同一性の一部という Go 流の正直さ）。
-- **外部公開ゲート（ルートの `export`）は通らない**。`/` は自パッケージ内の参照なので、外部到達を絞るルート `_.pw` の `export`（→ [公開面と外部到達](#公開面と外部到達)）とは無関係で、相対 `./`／`../` と同じく**自パッケージのどのモジュールにも届きます**。`/` と `./`／`../` の違いは「ルート絶対か・ファイル相対か」だけで、到達範囲は同じ。
+- **外部公開ゲート（ルートの `pub`）は通らない**。`/` は自パッケージ内の参照なので、外部到達を絞るルート `_.pw` の `pub`（→ [公開面と外部到達](#公開面と外部到達)）とは無関係で、相対 `./`／`../` と同じく**自パッケージのどのモジュールにも届きます**。`/` と `./`／`../` の違いは「ルート絶対か・ファイル相対か」だけで、到達範囲は同じ。
 - **運用指針**：**近接（兄弟・親子）は相対 `./`／`../`、遠隔・深いネストはルート絶対 `/`** を推奨します。両系統を持つのは Rust（`super::`／`crate::`）と同じで、近さに応じて読みやすい方を選べます。
-- `import`／`export`／[`part`](#part--モジュールの分割) は経路文法を共有するので、`/` はいずれでも書けます（`part /Foo`・`export /Models with *`）。
+- `import`／`pub import`／[`part`](#part--モジュールの分割) は経路文法を共有するので、`/` はいずれでも書けます（`part /Foo`・`pub import /Models with { Model }`）。
 
 ### 束縛のされ方
 
 - `import ./Foo` — モジュールを**名前空間 `Foo`**（パスの末尾要素）として束縛し、`Foo.Bar` でアクセス。`import @Std/Http` なら名前空間は `Http`。
 - `import ./Foo as F` — 名前空間を `F` に。
 - `import ./Foo with { Bar, Baz as Q }` — 選択したものを**フラットに**現スコープへ（`as` で別名可）。
-- **`import` にワイルドカード `with *` は無い**（意図的）。`with *` は名前を列挙せず全 export を裸で取り込み、元モジュールが export を増やすと取り込み側のスコープが黙って変わる ── provenance（出どころ）を曖昧にし「明示 > 暗黙」に反する。広く使いたいなら**名前空間 import**（`import ./Foo` → `Foo.Bar`、各使用点に出どころが見える）、特定名だけなら `with { … }`。`with *` がやれることは両者でより正直に書ける（＝上位互換の代替がある）。`import ./Foo with *` はコンパイルエラー。
-  - （再エクスポート `export ./Foo with *` は別構文＝バレルが子を全公開する用途で残置。）
+- **`import` / `pub import` にワイルドカード `with *` はありません**。取り込む名前を明示するか、名前空間 import を使います。公開元の追加でローカルスコープや再公開面が暗黙に増えることを避けます。
 
 ### ファイル名・ディレクトリ名の制約
 
@@ -159,29 +158,31 @@ import ./123Module       // ❌ エラー: 数字から始まる名前は不可
 import ./kebab-case      // ❌ エラー: ハイフンは使用不可
 ```
 
-## エクスポート
+## 公開と再公開
 
-宣言に `export` を付けると、そのモジュールの公開物になります。
+宣言に `pub` を付けると、そのモジュールの外から利用可能になります。修飾なしの宣言は定義モジュール内だけで利用可能です。公開指定はトップレベル宣言・メンバとも同じ `pub` に統一し、`export` 構文は持ちません。
 
 ```plew
-export struct PublicStruct { /* ... */ }
-export fn publicFunction() { /* ... */ }
-export trait PublicTrait { /* ... */ }
-export val publicConst: I32 = 100   // トップレベル定数も公開できる
+pub struct PublicStruct { /* ... */ }
+pub fn publicFunction() { /* ... */ }
+pub trait PublicTrait { /* ... */ }
+pub val publicConst: I32 = 100
 ```
+
+型の公開は全メンバの公開を意味しません。メンバの公開は `pub impl` / `pub` フィールドで指定し、非公開メンバは定義モジュール内に留まります（→ [メンバの可視性](../02-type-system/05-structs-enums.md#メンバの可視性)）。
 
 ### 再エクスポート
 
-他モジュールのものを自モジュールの公開物として転送するには、`import` を付けずに `export <path>` と書きます。`import` と違い**ローカルには束縛しません**（純粋な転送）。同じものをローカルでも使いたいときは `import` 行を別に書きます。
+`pub import` は通常の import と同じ名前をローカルに束縛し、同時にその束縛を自モジュールの公開面へ載せます。別の import 行は不要です。元モジュールから公開されていない宣言は取り込めず、再公開によって元のメンバ可視性は変わりません。
 
 ```plew
-export ./Models with { User, Post as Article }  // 選択して再エクスポート（別名可）
-export @Json with { encode, decode }            // 外部パッケージのものも
-export ./Models with *                          // 公開物を全てフラットに再エクスポート
-export ./Models                                 // 名前空間 Models ごと再エクスポート
+pub import ./Models with { User, Post as Article }
+pub import @Json with { encode, decode }
+pub import ./Models           // 名前空間 Models を束縛して公開
+pub import ./Models as M      // 名前空間の別名を束縛して公開
 ```
 
-公開 API をまとめる「バレル」モジュールはこの再エクスポートで組み立てます。
+別名はローカルと公開面の両方で同じ名前を使います。provenance は元宣言のままです。名前衝突は通常の import と同じ規則で判定し、曖昧な束縛を黙って選びません。公開 API をまとめるバレルも明示列挙または名前空間で記述します。`with *` は通常 import・再公開のどちらでも不可です。`pub import` にも import の DAG 制約が適用されます。
 
 ## 循環依存（モジュールグラフは DAG）
 
@@ -226,7 +227,7 @@ impl X as SomeTrait { /* ... */ }
 
 ### import の対象はモジュールのルート
 
-`import ./X` はモジュール `X`（ルートファイル `X.pw`）を参照し、ツリー全体の `export` と、ツリー内に書かれた impl をまとめて取り込みます。
+`import ./X` はモジュール `X`（ルートファイル `X.pw`）を参照し、ツリー全体の `pub` と、ツリー内に書かれた impl をまとめて取り込みます。
 
 ### ディレクトリパスの解決（`_.pw`）
 
@@ -248,7 +249,7 @@ import ./Models/User   // Models/User.pw（こちらは別モジュール）
 
 - モジュール内（part ツリー内）ならどのファイルに置いてもよい。同一モジュールに同じ無名 impl が二重に現れればコンパイルエラー。
 - **外部型（他モジュール定義）への実装は、トレイトの所有を問わず無名では書けず、[拡張](../02-type-system/09-extensions.md)（`#Ext`）を使う**（自分のトレイトを外部型に実装する場合も拡張）。
-- モジュールを import すると、その型と**その無名 impl が一緒に**入る（impl だけを個別に import する手段は無い）。**どのメンバを外から触れるかは [メンバの可視性](../02-type-system/05-structs-enums.md#メンバの可視性)が決めます** ── impl ブロックは `pub impl` で公開・修飾なしで非公開、フィールドは `pub val` / `pub mut val` / `pub(get) mut val` で公開範囲を指定し、修飾なしで非公開。`export` がモジュール境界（その型・関数・トレイトに到達できるか）を、`pub impl`/`pub` が型のカプセル化（到達した型のどのメンバを使えるか）を担う**直交した 2 軸**です。
+- モジュールを import すると、その型と**その無名 impl が一緒に**入る（impl だけを個別に import する手段は無い）。**どのメンバを外から触れるかは [メンバの可視性](../02-type-system/05-structs-enums.md#メンバの可視性)が決めます** ── impl ブロックは `pub impl` で公開・修飾なしで非公開、フィールドは `pub val` / `pub mut val` / `pub(get) mut val` で公開範囲を指定し、修飾なしで非公開。宣言とメンバに共通の `pub` がモジュール外への可視性を指定します。型を公開しても非公開メンバは公開されず、公開メンバだけで非公開型への外部到達を与えることもありません。
 
 ## パッケージ
 
@@ -279,13 +280,13 @@ import @Utils
 
 ### 公開面と外部到達
 
-パッケージの**公開面は、ルートモジュール `_.pw`（`src/_.pw`）が `export` したものだけ**で、**フラット**です。外部からは `import @A`（名前空間 `A`）か `import @A with { … }`（選択）で使い、**パッケージ内へは潜れません**（サブモジュール subpath は無い）。ルートが公開 API を組み立て、それ以外のモジュール・part は内部実装で外から到達できません。ソースは `lib/`・`bin/` のような分割をせず、すべて `src/` に置きます。
+パッケージの**公開面は、ルートモジュール `_.pw`（`src/_.pw`）が `pub` したものだけ**で、**フラット**です。外部からは `import @A`（名前空間 `A`）か `import @A with { … }`（選択）で使い、**パッケージ内へは潜れません**（サブモジュール subpath は無い）。ルートが公開 API を組み立て、それ以外のモジュール・part は内部実装で外から到達できません。ソースは `lib/`・`bin/` のような分割をせず、すべて `src/` に置きます。
 
 ```plew
 // src/_.pw（パッケージ A のルート＝公開の玄関）
-export struct Connection { /* … */ }   // 直接公開
-export fn connect() { /* … */ }
-export ./Internal with { Helper }      // 内部モジュールから選んでフラットに再公開
+pub struct Connection { /* … */ }   // 直接公開
+pub fn connect() { /* … */ }
+pub import ./Internal with { Helper }      // 内部モジュールから選んでフラットに再公開
 ```
 
 ```plew
@@ -294,40 +295,40 @@ import @A with { connect }      // ✅ 選択してフラットに
 import @A/Connection            // ❌ パッケージ内へは潜れない（Connection はアイテム＝with で取る）
 ```
 
-- **公開面はフラット＝ルートの `export`**。「複数の公開エントリ」「サブモジュール公開」を表現する形（旧 `public` フィールド・`export ./Http` でのサブパス公開）は**持ちません** ── パッケージは 1 つの lib（Rust の lib.rs モデル）で、サブ領域を外に見せたいなら**別パッケージ**（`/` を含む名前＝ワークスペースのメンバ）として publish します。encapsulation は ファイル→モジュールが [`part`](#part--モジュールの分割)、モジュール→公開面が [`export`](#エクスポート) の 2 層。
+- **公開面はフラット＝ルートの `pub`**。「複数の公開エントリ」「サブモジュール公開」を表現する形は**持ちません** ── パッケージは 1 つの lib（Rust の lib.rs モデル）で、サブ領域を外に見せたいなら**別パッケージ**（`/` を含む名前＝ワークスペースのメンバ）として publish します。encapsulation は ファイル→モジュールが [`part`](#part--モジュールの分割)、モジュール→公開面が [`pub`](#公開と再公開) の 2 層。
 - **`@A/Foo` はパッケージ内のサブモジュールではない**。外部 `@…` の `/` は名前の字面なので、`@Acme/Http` は「`Acme` の `Http` サブ」ではなく `Acme/Http` という 1 パッケージ。サブ領域を `/` で見せたいときは、それを**独立したメンバパッケージ**にする（→ [ワークスペース](17-packages.md#ワークスペース複数パッケージのリポジトリ)）。
-- **パッケージは常に lib 面（`_.pw` の export）を持ち、bin は `main` を持つファイル**を manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で公開列挙したもの（1 lib ＋ N bin・Rust の lib+bin モデル）。`_.pw` が `main` を持てばパッケージ名の既定 bin。`plew run @A:Name`（無セレクタは既定 bin）→ [実行エントリ](#実行エントリmain)。複数 lib が要るならワークスペースの members。
-- **自前（`/`・`./`／`../`）は自パッケージのファイル木**（`public` ゲートのような外部到達制限を受けず、どのモジュールにも届く）。外部 `@…` だけがルートの `export` 公開面に絞られます。違いは「自前はファイルパスで潜れる／外部は名前でフラットに使う」点。
+- **パッケージは常に lib 面（`_.pw` の公開面）を持ち、bin は `main` を持つファイル**を manifest の [`bin`](17-packages.md#bin公開する実行ファイル) で公開列挙したもの（1 lib ＋ N bin・Rust の lib+bin モデル）。`_.pw` が `main` を持てばパッケージ名の既定 bin。`plew run @A:Name`（無セレクタは既定 bin）→ [実行エントリ](#実行エントリmain)。複数 lib が要るならワークスペースの members。
+- **自前（`/`・`./`／`../`）は自パッケージのファイル木**（`public` ゲートのような外部到達制限を受けず、どのモジュールにも届く）。外部 `@…` だけがルートの `pub` 公開面に絞られます。違いは「自前はファイルパスで潜れる／外部は名前でフラットに使う」点。
 
 #### 公開 API 閉包性
 
-パッケージ外から到達可能な API のシグネチャに現れる**同一パッケージ内の名前**は、そのパッケージのルート公開面（`src/_.pw` の `export`）からも到達可能でなければなりません。公開 surface に package-local な private 型・private トレイト・到達不能な関連型射影などが漏れると、利用側が「呼べるが型を書けない／読めない」状態になるためです。この検査は型式を再帰的に見ます。外部型の型引数、無名レコード、関数型、存在型、関連型束縛などの内側に現れる同一パッケージ内の名前も同じ規則に従います。
+パッケージ外から到達可能な API のシグネチャに現れる**同一パッケージ内の名前**は、そのパッケージのルート公開面（`src/_.pw` の `pub`）からも到達可能でなければなりません。公開 surface に package-local な private 型・private トレイト・到達不能な関連型射影などが漏れると、利用側が「呼べるが型を書けない／読めない」状態になるためです。この検査は型式を再帰的に見ます。外部型の型引数、無名レコード、関数型、存在型、関連型束縛などの内側に現れる同一パッケージ内の名前も同じ規則に従います。
 
-外部パッケージ由来の名前は、その宣言元パッケージの公開面に属していればよく、現在のパッケージが再エクスポートする必要はありません。たとえば `@A` の公開 API が `@B.Token` を返すなら、`Token` の provenance は `@B` のままです。`@A` が `Token` を `@A.Token` としても提供したい場合だけ、`export @B with { Token }` で再エクスポートします。Plew は `public dependency` のような manifest 区分を持たず、依存を public/private に分類するためだけの lock 派生情報も持ちません。公開 API 閉包性は、package-local な非公開名の漏洩を閉じる規則です。
+外部パッケージ由来の名前は、その宣言元パッケージの公開面に属していればよく、現在のパッケージが再エクスポートする必要はありません。たとえば `@A` の公開 API が `@B.Token` を返すなら、`Token` の provenance は `@B` のままです。`@A` が `Token` を `@A.Token` としても提供したい場合だけ、`pub import @B with { Token }` で再エクスポートします。Plew は `public dependency` のような manifest 区分を持たず、依存を public/private に分類するためだけの lock 派生情報も持ちません。公開 API 閉包性は、package-local な非公開名の漏洩を閉じる規則です。
 
 公開 API に外部パッケージ由来の型が現れても、その型を利用側のソースで名指す権利は自動発生しません。利用側がその名前を `import @B with { Token }` のように束縛したいなら、通常の import 規則どおり `@B` を直接依存として宣言します。直接依存が無い場合でも、コンパイラの公開 metadata は宣言元 package identity / version と宣言 identity を保持するので、推論された値としての受け渡しや型検査はできますが、phantom dependency として source 上の import はできません。
 
-ここでいう「パッケージ」は解決済み package instance（root package、依存 package、workspace member、多版共存した各 version）です。各 module と各宣言はその package identity を持ち、判定はソース上の綴りではなく名前解決後の宣言 identity に対して行います。`import @B with { Token as BToken }` や `export ./Internal with { Token as Lexeme }` の alias は use-site / public surface の表示名を変えますが、宣言の provenance は変えません。別名で再エクスポートした場合、外部 surface では公開別名を正規の表示名として使い、公開されていない内部名を metadata / docs / 診断に漏らしません。
+ここでいう「パッケージ」は解決済み package instance（root package、依存 package、workspace member、多版共存した各 version）です。各 module と各宣言はその package identity を持ち、判定はソース上の綴りではなく名前解決後の宣言 identity に対して行います。`import @B with { Token as BToken }` や `pub import ./Internal with { Token as Lexeme }` の alias は use-site / public surface の表示名を変えますが、宣言の provenance は変えません。別名で再エクスポートした場合、外部 surface では公開別名を正規の表示名として使い、公開されていない内部名を metadata / docs / 診断に漏らしません。
 
 関連型射影は、正規化後の源トレイトを閉包性チェック対象にします。`T#Trait.Item` の `Trait` は通常の型・トレイト名と同じ公開面ルールで検査し、`Item` はその `Trait` の公開要求集合に属する関連型でなければなりません。一意短縮 `T.Item` も、解決後の源トレイトで同じ規則に従います。
 
-ここでいう「パッケージ外から到達可能」は、ルート公開面の `export` とメンバ可視性の組で決まります。`pub` 単体ではパッケージ外 API になりません。型そのものがルート公開面に載っていないなら、その型の `pub impl` や `pub` フィールドは型に到達できる内部コード向けの可視性であり、パッケージ外公開面ではありません。
+ここでいう「パッケージ外から到達可能」は、ルート公開面の `pub` とメンバ可視性の組で決まります。`pub` 単体ではパッケージ外 API になりません。型そのものがルート公開面に載っていないなら、その型の `pub impl` や `pub` フィールドは型に到達できる内部コード向けの可視性であり、パッケージ外公開面ではありません。
 
 閉包性の対象は、たとえば次のような surface です：
 
-- `export fn` の引数型・戻り値型・型パラメータ境界・関連型束縛。
-- `export val` / `export mut val` の公開型（型注釈が無い場合は推論後に公開 surface へ現れる型）。
-- `export struct` / `export enum` の公開フィールド・公開 factory・公開メソッド・公開準拠のシグネチャ。
-- `export trait` の要求・関連型・supertrait・公開提供メソッド（`pub impl Trait`）のシグネチャ。
-- `export` / 再エクスポートで公開面に載った extension 経由で、パッケージ外から呼べるメンバ・準拠のシグネチャ。
+- `pub fn` の引数型・戻り値型・型パラメータ境界・関連型束縛。
+- `pub val` / `pub mut val` の公開型（型注釈が無い場合は推論後に公開 surface へ現れる型）。
+- `pub struct` / `pub enum` の公開フィールド・公開 factory・公開メソッド・公開準拠のシグネチャ。
+- `pub trait` の要求・関連型・supertrait・公開提供メソッド（`pub impl Trait`）のシグネチャ。
+- `pub` / 再エクスポートで公開面に載った extension 経由で、パッケージ外から呼べるメンバ・準拠のシグネチャ。
 - derive / macro などが公開 surface を合成する場合、その合成後の公開シグネチャ。
 
 ```plew
 struct Secret {}
 
-export fn leak() -> Secret { ... }          // エラー: Secret は外部から見えない
+pub fn leak() -> Secret { ... }          // エラー: Secret は外部から見えない
 
-export struct PublicBox {
+pub struct PublicBox {
     pub val value: Secret                    // エラー: 公開フィールドに private 型が出る
 }
 
@@ -336,7 +337,7 @@ pub impl InternalBox {
     fn reveal() -> Secret { ... }            // OK: InternalBox 自体が外部到達しない
 }
 
-export struct PublicOk {}
+pub struct PublicOk {}
 impl PublicOk {
     fn hidden() -> Secret { ... }            // OK: 非公開メソッドは外部 surface ではない
 }
@@ -346,20 +347,19 @@ impl PublicOk {
 
 ```plew
 // src/Internal.pw
-export struct Token {}
+pub struct Token {}
 
 // src/_.pw
 import ./Internal with { Token }
 
-export fn parse() -> Token { ... }           // エラー: Token は @ThisPackage の公開面に無い
+pub fn parse() -> Token { ... }           // エラー: Token は @ThisPackage の公開面に無い
 ```
 
 ```plew
 // src/_.pw
-export ./Internal with { Token }
-import ./Internal with { Token }
+pub import ./Internal with { Token }
 
-export fn parse() -> Token { ... }           // OK: Token は @ThisPackage.Token として到達可能
+pub fn parse() -> Token { ... }           // OK: Token は @ThisPackage.Token として到達可能
 ```
 
 外部公開名は再エクスポート不要です：
@@ -367,7 +367,7 @@ export fn parse() -> Token { ... }           // OK: Token は @ThisPackage.Token
 ```plew
 import @B with { Token }
 
-export fn parse() -> Token { ... }           // OK: Token は @B の公開面にある
+pub fn parse() -> Token { ... }           // OK: Token は @B の公開面にある
 ```
 
 公開 API 閉包性はシグネチャの規則です。関数本体・メソッド本体・factory 本体の中で private helper や private 型を使うことは、外部 surface に漏れない限り許されます。
@@ -412,7 +412,7 @@ plew install @Tool        # 外部パッケージの bin をインストール�
 
 ## テスト
 
-テストは **`test` ブロック**で書きます。**関数ではありません** ── テストはプログラムとしての意味（戻り値・レシーバ）を持たず「走らせて検査する」だけなので、`fn` ではなく専用ブロックにします（Zig/D 流）。`test` は実行時の意味を持たない**宣言修飾的な語**で、`export`（リンケージを変えるが実行時意味ゼロ）と同類です。
+テストは **`test` ブロック**で書きます。**関数ではありません** ── テストはプログラムとしての意味（戻り値・レシーバ）を持たず「走らせて検査する」だけなので、`fn` ではなく専用ブロックにします（Zig/D 流）。`test` は実行時の意味を持たない**宣言修飾的な語**で、`pub`（ソース上の可視性を変えるが実行時意味ゼロ）と同類です。
 
 ```plew
 test "parses an empty header" {
@@ -425,10 +425,10 @@ test "parses an empty header" {
 
 `test` ブロックは**コンテナスコープの宣言**で、置ける場所は 2 つ。**テストに特権的な可視性は無く**、通常コードと同じ規則で「見たいものが見える位置」に置きます：
 
-- **モジュール直下** ── 非 `export`（モジュール私的）の自由関数や公開 API を試験。
-- **無名 `impl` の中** ── その型の**非 [`pub`](../02-type-system/05-structs-enums.md#メンバの可視性) メンバ**を白箱で試験（無名 impl だから非 pub が見える）。
+- **モジュール直下** ── 非 `pub` の自由関数・型メンバと公開 API を試験。
+- **無名 `impl` の中** ── その型の**非 [`pub`](../02-type-system/05-structs-enums.md#メンバの可視性) メンバ**を白箱で試験（同じ定義モジュールなので非 pub が見える）。
 
-`fn` の本体内には書けません。型の private を本体ファイルと分けて試験したいときは [`part`](#part--モジュールの分割) で**同一モジュールの別ファイル**に無名 impl を置けます（同一モジュールなので非 pub が見える）。
+`fn` の本体内には書けません。型の内部を本体ファイルと分けて試験したいときは [`part`](#part--モジュールの分割) で**同一モジュールの別ファイル**に無名 impl を置けます（同一モジュールなので非 pub が見える）。
 
 ```plew
 struct Parser { … }
@@ -471,7 +471,7 @@ import @Std/Testing with { expect, expectEq, expectNe, expectApprox }
 
 > **状態 = 設計叩き台（点1 不透明ハンドル/ポインタ/共有 struct/ABI 記法・点2 数値対応・点3 文字列境界・点4 所有権規約・リンクまで一通り確定方向で記述／残るは下記「未決」）。** Plew の C-API バックエンド（libLLVM-C 等を叩く）の土台。ABI は当面 `c` のみ（`system`/WASM/`javascript` は後続）。
 >
-> **スコープ＝外部を「使う側」のみ（Plew が C を呼ぶ）。** Plew 関数を C へ「使わせる側」（export＝Plew→C 公開）は**未定**で本節に含めない（既存 `export` キーワードとの整合・呼出規約・マングリングを別途詰める必要があり、現状の LLVM 利用には不要なため）。
+> **スコープ＝外部を「使う側」のみ（Plew が C を呼ぶ）。** Plew 関数を C へ「使わせる側」（export＝Plew→C 公開）は**未定**で本節に含めない（ソースの `pub` とは独立に C ABI 公開の呼出規約・マングリングを別途詰める必要があり、現状の LLVM 利用には不要なため）。
 
 `extern(c)` 境界は **Plew の保証が切れる継ぎ目**です。境界の内側（値意味論・CoW・ARC・実質 race-free）はあくまで Plew が管理するメモリについての約束で、**外部 C 世界の確保・解放・別名・スレッド安全は Plew は一切引き受けません**（"hidden cost は可・hidden meaning は不可" の原則上、ここは唱えた通り＝**生で危険なものは生で危険**と見えるべき領域）。だから FFI は**床**として最小・正直に定義し、安全性は Plew 側で `unique`＋`deinit` や `nonsendable` ラッパを被せて作ります（安全な `Array`/`String` が**コンパイラ内部の生メモリ操作**の上に安全床 `Buffer` を介して立つのと同じ"生床＋安全皮"の構図＝Plew では生操作はコンパイラ内部に隠れ、FFI ではそれが明示 opt-in の境界として露出する）。
 
@@ -713,5 +713,5 @@ val m = LLVMModuleCreateWithNameInContext(cname.ptr, ctx)  // 呼び出し中有
 
 - **プラットフォーム幅型の変換規則**：`as`（無損失）と `TryFrom`（可謬）の閾値の厳密化・`CSize`↔`USize`↔`U64` の関係。
 - **ハンドルの等価**：ポインタ同一性で `Eq` を提供するか。当面は非提供で開始し additive 可。
-- **使わせる側（export＝Plew→C 公開）＝未定**：Plew 関数を C へ公開する綴り・マングル抑制・可視性（既存 `export` モジュール公開との整合）・呼出規約の既定。既存 `export` キーワードと紛らわしく要設計・libLLVM-C 利用には不要なので本節スコープ外。
+- **使わせる側（export＝Plew→C 公開）＝未定**：Plew 関数を C へ公開する綴り・マングル抑制・可視性（ソース上の `pub` とは別の C ABI 公開契約）・呼出規約の既定。C ABI 公開の記法は要設計・libLLVM-C 利用には不要なので本節スコープ外。
 - **型エイリアス**（`type FooRef = CPtr[FooOpaque]`）と **`repr(packed)`/`callconv` 軸**：当面は不透明 `type` と `repr(c)` のみ、両者は後続 additive。

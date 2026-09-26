@@ -3,7 +3,7 @@
 ## 関数宣言
 
 ```plew
-export fn functionName[T, U](
+pub fn functionName[T, U](
     arg1: Type1,
     inout arg2: Type2,
     arg3: Type3 = defaultValue

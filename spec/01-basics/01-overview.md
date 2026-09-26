@@ -9,12 +9,12 @@ Plew は、複雑な状態を持つクライアントと、それを支える AP
 ## 命名規則
 
 - **型名**: PascalCase（例: `MyType`, `String`）
-- **変数名・関数名・定数**: camelCase（例: `myVariable`, `calculateSum`, `maxRetry`）。定数（`val`/`export val`/`assoc val`）も同じく camelCase で、SCREAMING_SNAKE_CASE は使いません。
+- **変数名・関数名・定数**: camelCase（例: `myVariable`, `calculateSum`, `maxRetry`）。定数（`val`/`pub val`/`assoc val`）も同じく camelCase で、SCREAMING_SNAKE_CASE は使いません。
 
 ## キーワード
 
 ```
-export, pub, get, type, val, mut, async, spawn, await, loop, break, continue,
+pub, get, type, val, mut, async, spawn, await, loop, break, continue,
 give, return, panic, where, enum, struct, newtype, assoc, extension, impl, via, trait, fn, macro, macrointerface,
 factory, borrow, inout, move, unique, sendable, nonsendable, deinit, guard, while, for, in, if, else,
 match, as, self, Self, extern, repr, import, part, with, try, true, false

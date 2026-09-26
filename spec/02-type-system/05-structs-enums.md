@@ -4,17 +4,17 @@
 
 ```plew
 @[Eq, Hash]  // ディレクティブ（derive・オプション）
-export struct MyStruct[T] where T: SomeTrait {
+pub struct MyStruct[T] where T: SomeTrait {
     pub val field1: String
     pub val readonlyField: I32  // 公開 read-only フィールド
-    pub(get) mut val internalSetField: I32  // 読み取り公開・書き込みは型内部のみ
+    pub(get) mut val internalSetField: I32  // 読み取り公開・書き込みは定義モジュール内のみ
     mut val field2: T = defaultValue()  // フィールドの宣言時デフォルト（生成時に省略可）
 }
 ```
 
-`pub` / `pub(get)` / 非公開（修飾なし）のメンバ可視性は本章末の[メンバの可視性](#メンバの可視性)を参照。`pub(get)` は `mut val` フィールドの setter だけを内部に閉じる指定です。非公開メンバは型の無名 impl からのみ見えます。
+`pub` / `pub(get)` / 非公開（修飾なし）のメンバ可視性は本章末の[メンバの可視性](#メンバの可視性)を参照。`pub(get)` は `mut val` フィールドの setter だけを内部に閉じる指定です。非公開メンバは定義モジュール内のコードから見えます。
 
-型宣言の修飾子順序は **`export` → `unique` → `nonsendable` → `struct` / `enum`** に固定します。例えば `export unique nonsendable struct UiResource` は合法ですが、同じ意味の修飾子を並べ替えた `nonsendable unique struct` は構文エラーです。修飾子を集合として扱わず、同じ宣言に一つの書き方だけを与えます（意味論は [unique](../01-basics/03-values.md#uniqueコピー不可型) / [sendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
+型宣言の修飾子順序は **`pub` → `unique` → `nonsendable` → `struct` / `enum`** に固定します。例えば `pub unique nonsendable struct UiResource` は合法ですが、同じ意味の修飾子を並べ替えた `nonsendable unique struct` は構文エラーです。修飾子を集合として扱わず、同じ宣言に一つの書き方だけを与えます（意味論は [unique](../01-basics/03-values.md#uniqueコピー不可型) / [sendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
 拡張を型本体で既定化する構文は持ちません。拡張は常に使用箇所の `#Ext` で opt-in します。型の作者が拡張由来の振る舞いを型のベア表面に採用したい場合は、型を所有するモジュールの `pub impl Type` / `pub impl Type as Trait` に明示的な forwarding メソッドや準拠を書きます。トレイト自身の公開提供メソッドは準拠（`impl Type as Trait`）で自動的にベアに載ります（→ [トレイト](08-traits.md)、[拡張](09-extensions.md)）。
 
@@ -24,7 +24,7 @@ export struct MyStruct[T] where T: SomeTrait {
 
 ```plew
 @[All, Eq, Hash]  // ディレクティブ（オプション）
-export enum Color[T] where T: Format {
+pub enum Color[T] where T: Format {
     Red(intensity: F64)
     Green
     Blue
@@ -59,13 +59,13 @@ export enum Color[T] where T: Format {
 
 ```plew
 @[All, Eq]
-export enum Optional[T] {
+pub enum Optional[T] {
     Some(value: T)
     None
 }
 
 @[All, Eq]
-export enum Result[T, E] {
+pub enum Result[T, E] {
     Ok(value: T)
     Err(error: E)
 }
@@ -169,28 +169,30 @@ val a = <Person name="Alice" age=30 />   // 全指定
 val b = <Person name="Bob" />            // age 省略 → 0
 ```
 
-**既定 factory の既定可視性は非公開（not pub）** ── 通常の非公開メンバと同じく、**型の無名 impl からしか呼べません**。memberwise factory は**非公開フィールドも構築引数として晒す**ため、無制限に公開するとフィールド可視性（`pub val` / `pub mut val` / `pub(get) mut val` / 非公開）が構築時に破れるからです。外部・同モジュールの他コードからの生成は、型がカスタム factory を明示提供して担います。
+**既定 factory の既定可視性はモジュール内**です。factory の宣言を何も書かなくても、同じ定義モジュールの root と part にある自由関数・別型の impl・名前付き拡張から利用できます。非公開を含む全フィールドを指定でき、既定値のあるフィールドは省略できます。モジュール外への公開は暗黙に行いません。
 
-公開したいときは**`pub impl` 内に裸の `factory` を 1 行**書きます（`@[...]` ディレクティブではなく素の構文 ── 可視性制御に祝福ディレクティブを作らないため）。可視性は他のメンバと同じく [`impl` ブロック単位](#メンバの可視性)で、`factory` を `pub impl` に置けば公開・`impl` に置けば非公開（既定のまま）です。
+公開したいときは **`pub impl` 内に裸の `factory` を 1 行**書きます。これは全フィールドを引数に取る memberwise factory の明示的な公開です。メンバの公開指定は impl 単位であり、メンバ単体の `pub factory` は書きません。
 
 ```plew
-struct Color {
-    pub val r: U8 = 0
-    pub val g: U8 = 0
-    pub val b: U8 = 0
-    val cache: Optional[Parsed] = <Optional.None />   // 非公開・既定値あり
+pub struct Credentials {
+    val token: String
+    val label: String = "default"
 }
 
-pub impl Color {
-    factory   // pub impl 内の memberwise factory を公開（公開引数は pub フィールド r/g/b のみ）
+pub impl Credentials {
+    factory
 }
 
-val red = <Color r=255 />   // 型の外からでも生成可
+// 別モジュールで Credentials を import 済み
+val credentials = <Credentials token="secret" /> // label は既定値
+// credentials.token                            // エラー: 読み取りは定義モジュール内のみ
 ```
 
-- **公開できる条件＝既定値を持たないフィールドがすべて `pub`**（＝非公開フィールドはすべて既定値を持つ、と同値）。満たさなければコンパイルエラー。
-- **公開版が引数に取るのは `pub` フィールドだけ**。非公開フィールドは外から設定できず**常に既定値に固定**されます。
-- 書かなければ既定 factory は非公開のまま。カスタム無名 `factory(...)` とのラベル集合衝突は通常の[オーバーロード](07-methods-impl.md)規則で判定。
+- **引数はフィールドの可視性によらず全フィールド**。非公開フィールドや `pub(get)` フィールドも、生成時の引数として指定できます。生成後の読み取り・書き込み権限は変わりません。
+- **全フィールドが `pub` である必要はありません**。非公開フィールドに既定値がある必要もありません。既定値のある引数だけを省略でき、省略時に既定値を評価します。
+- **全フィールドの名前と型が構築 API の一部**になります。公開シグネチャは通常の[公開 API 閉包性](../04-execution/15-modules.md#公開-api-閉包性)を満たす必要があり、パッケージ外に公開する factory の引数へ非公開型を漏らしてはいけません。既定値があってもこの条件は免除されません。
+- 利用者に指定させたくないフィールドや入力検証がある場合は、裸の公開 factory を宣言せず、カスタム factory で引数と構築処理を定義します。
+- 書かなければ既定 factory はモジュール内のままです。カスタム無名 `factory(...)` とのラベル集合衝突は通常の[オーバーロード](07-methods-impl.md)規則で判定します。
 
 ### factory
 
@@ -317,50 +319,43 @@ val n: Optional[I32] = <.None />            // ペイロードなしバリアン
 
 ## メンバの可視性
 
-メンバの可視性は**型のカプセル化だけ**を制御し、モジュール/パッケージ境界とは独立です（境界は [モジュール](../04-execution/15-modules.md) の `export` / 再エクスポートが担当）。段階は **公開 / 非公開の 2 つだけ**で、`pub(crate)` のような中間段は持ちません。
+可視性は **モジュール内 / 公開の二段階**です。型だけに閉じる private や、パッケージ内公開の中間段は持ちません。モジュールは定義 root と推移的な part 全体です。
 
-`pub` は「その型に到達できるコードから見える」という意味です。型そのものが `export` されていなければ、`pub` メンバもモジュール外からは到達できません。モジュール外から到達可能な公開 surface だけが [公開 API 閉包性](../04-execution/15-modules.md#公開-api-閉包性) の対象になります。
+- **修飾なしのフィールドと `impl`**：定義モジュール内から利用可能。同じモジュールの自由関数・別型の impl・名前付き拡張も利用できます。
+- **`pub` フィールドと `pub impl`**：その型に到達できる別モジュールからも利用可能。
+- **`pub(get) mut val`**：読み取りは公開、書き込みは定義モジュール内のみ。既定 factory の明示公開による構築時の値指定とは独立です。
+- **`pub mut val`**：読み書きとも公開。ただし書き込みには通常の可変性・借用規則を満たす必要があります。
+- **`val`**：公開範囲によらず構築後の再代入は不可。`pub(get) val` は不可で、読み取りを公開するなら `pub val` を使います。
 
-可視性の付け方は**メンバの種類で 2 通り**です：
+メソッド・関連関数・関連値・factory の公開指定は **impl ブロック単位**です。`pub impl` は全メンバを公開し、修飾なし `impl` は全メンバをモジュール内にします。個別の `pub fn` / `pub factory` は書けません。公開と内部用は別の impl ブロックに分けます。
 
-- **フィールドはフィールド単位**（`struct` 本体に書く）。`pub(get)` の「読み公開・書き内部のみ」という読み書きの非対称があるので、ブロックには畳めず宣言ごとに付けます。
-  - **`pub val`** — 読み取りは公開。`val` なので型の内部からも外部からも再代入できない。
-  - **`pub mut val`** — 読み取りと書き込みが公開。外部コードも、値の束縛が `mut val` ならこのフィールドを書き換えられる。
-  - **`pub(get) mut val`** — 読み取りは公開、書き込みは型の内部のみ（外部からは不変に見える）。
-  - **修飾なし `val` / `mut val`** — **その型の無名 impl の中からのみ**見える（非公開）。
-  - **`pub(get) val` は不可**。`val` はそもそも書き込み不可なので、公開 read-only フィールドは `pub val` と書きます。
-- **メソッド・関連関数・`factory` は `impl` ブロック単位**（→ [メソッドと impl](07-methods-impl.md)）。**メソッド個別の `pub`（`pub fn`）は書けません** ── 可視性は `impl`／`pub impl` に付けます。
-  - **`pub impl Type { … }`** — ブロック内のメンバはすべて公開（その型を参照できるコードから呼べる）。
-  - **修飾なし `impl Type { … }`** — ブロック内はすべて非公開（その型の**無名 impl の中からのみ**見える）。
-  - 公開と非公開を混ぜたい型は、`pub impl` と `impl` の **2 ブロックに分けます**。
-
-**「非公開」が見えるのは、その型の無名 impl の中だけ**です（`pub impl` も無名 impl なので、公開メソッドの本体から非公開フィールド/メソッドに触れられます）。同一モジュールの非 impl コード・他の型・名前付き拡張（`#Ext`、自型・他型を問わず）・外部パッケージ、いずれからも非公開メンバは見えません。
+型そのものも `pub` で公開します。型が非公開なら `pub` メンバを宣言しても、その型を外部に公開することにはなりません。公開する型・メンバの両方が見えるときに外部からアクセスできます。パッケージ外の到達には、さらに[ルート公開面](../04-execution/15-modules.md#公開面と外部到達)に型が載っている必要があります。
 
 ```plew
-struct Account {
-    pub val id: I32              // どこからでも読める。val なので再代入不可
-    pub mut val nickname: String // どこからでも読み書き
-    pub(get) mut val balance: I32 // 読み取り公開・書き込みは内部のみ
-    mut val secretKey: String   // 無名 impl の中だけ
+pub struct Account {
+    pub val id: I32
+    pub mut val nickname: String
+    pub(get) mut val balance: I32
+    mut val secretKey: String
 }
 
-pub impl Account {              // pub impl → メソッドは公開。無名 impl なので secretKey も触れる
-    inout fn rotateKey() { self.secretKey = generate() }   // 公開メソッドが非公開フィールドを書く
+impl Account {
+    fn helper() -> I32 { return self.balance + 1 }
 }
 
-impl Account {                  // 修飾なし → 非公開ヘルパ群
-    fn derive() -> I32 { return self.balance + 1 }
+// 同じモジュールの自由関数も内部状態を扱える
+fn replaceKey(account: inout Account, key: String) {
+    account.secretKey = key
 }
 
 extension Audit {
-    impl Account {              // 拡張 → 公開フィールドのみ
-        fn report() -> I32 { return self.balance }  // OK
-        // fn leak() -> String { return self.secretKey }  // エラー: 非公開
+    impl Account {
+        fn key() -> String { return self.secretKey } // 同じ定義モジュールなので可
     }
 }
 ```
 
-非公開メンバを見られるのが**無名 impl だけ**なので、外部型を拡張しても作者が隠した内部には触れられず、カプセル化が型レベルで保たれます。兄弟モジュールがメンバを使いたい場合は `pub` フィールド／`pub impl` にする（＝外部にも見える）か、密結合なコードを型のモジュールに `part` で同居させて無名 impl から触れます。
+別モジュールで定義した拡張からは、その型の非公開メンバにはアクセスできません。同じパッケージ・ディレクトリにあること、型を import / 再公開したこと、view の切替えでは権限は増えません。可視性はアクセスするコードと宣言の定義モジュール identity で判定し、generic の実体化先や呼出し元へ置き換えません。型の不変条件を共同で守る責任は定義モジュール全体にあります。
 
 ### トレイト準拠の可視性
 
@@ -369,4 +364,4 @@ extension Audit {
 - **`pub impl Type as Trait`（公開準拠）** — `Type` が見える所どこでも、その準拠が与えるメソッドを（トレイト名を書かずに）呼べる。
 - **`impl Type as Trait`（内部準拠）** — 準拠という**事実**はモジュール内で成立し `where T: Trait`／`any Trait` に使えるが、**準拠が与えるメソッドを外部から呼ぶと可視性エラー**。内部だけで使う準拠（内部用ヘルパトレイトへの準拠など）はこちらで閉じる。
 
-`export impl` は持ちません ── 外部到達は「型の [`export`](../04-execution/15-modules.md#エクスポート)」と「`pub impl`」の組で決まります（型が `export` されていなければ、`pub impl` でもそもそも外から型に届きません）。準拠は coherence の大域事実なので「準拠そのものの隠蔽」はせず、隠すのは**メソッドアクセス**です。
+外部到達は「型の [`pub`](../04-execution/15-modules.md#公開と再公開)」と「`pub impl`」の組で決まります（型が `pub` されていなければ、`pub impl` でもそもそも外から型に届きません）。準拠は coherence の大域事実なので「準拠そのものの隠蔽」はせず、隠すのは**メソッドアクセス**です。

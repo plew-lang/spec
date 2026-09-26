@@ -134,12 +134,12 @@ nonsendable enum UiPhase {
     Active
 }
 
-export unique nonsendable struct UiResource {
+pub unique nonsendable struct UiResource {
     val rawHandle: U64
 }
 ```
 
-型宣言の修飾子は集合として並べ替え可能にはせず、**可視性 → 所有権 → sendability → 宣言種別**の順に固定します。したがって `export unique nonsendable struct` / `unique nonsendable enum` が正規かつ唯一の順序で、`nonsendable unique struct` などは構文エラーです。`unique` と `nonsendable` は独立した性質なので同じ型に併記できます。
+型宣言の修飾子は集合として並べ替え可能にはせず、**可視性 → 所有権 → sendability → 宣言種別**の順に固定します。したがって `pub unique nonsendable struct` / `unique nonsendable enum` が正規かつ唯一の順序で、`nonsendable unique struct` などは構文エラーです。`unique` と `nonsendable` は独立した性質なので同じ型に併記できます。
 
 `nonsendable` は**構造的に自動伝播**します。`nonsendable` なフィールドを直接または推移的に含む struct、nonsendable な payload を持つ enum は、外側に `nonsendable` と書かなくても nonsendable です。
 

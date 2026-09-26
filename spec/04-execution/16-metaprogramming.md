@@ -37,14 +37,14 @@ struct Point {
 
 `macro X as ...` は `X` の所有モジュール内でだけ宣言できる（v1）。第三者が外部宣言へ勝手に同名の derive provider を後付けすることはできない。これは「`@[X]` の意味は、名前解決された `X` の所有者だけが決める」という provenance 規則であり、コアライブラリやコンパイラの依存グラフをどう切るかとは別軸の仕様判断である。
 
-macro role の可視性は `impl` と同型に扱う。外部モジュールから `@[X]` / `@[X(args)]` を使えるのは、(1) 既存宣言 `X` 自体がその位置から見える、かつ (2) `X` の所有モジュールが `pub macro X as ...` を公開している場合だけ。`macro X as ...`（`pub` なし）は所有モジュール内だけで有効。`pub macro` であっても `X` 自体が `export` されていなければ、外部から `X` を名指せないので外部 derive としては使えない。
+macro role の可視性は `impl` と同型に扱う。外部モジュールから `@[X]` / `@[X(args)]` を使えるのは、(1) 既存宣言 `X` 自体がその位置から見える、かつ (2) `X` の所有モジュールが `pub macro X as ...` を公開している場合だけ。`macro X as ...`（`pub` なし）は所有モジュール内だけで有効。`pub macro` であっても `X` 自体が `pub` されていなければ、外部から `X` を名指せないので外部 derive としては使えない。
 
 マクロは生成メソッド（要求＝`derive(input: TopItemAst) -> String`）を提供し、**注釈対象項の構文木を受け取り生成 Plew ソースを `String` で返す**。`Derive` 系契約は通常 trait ではなく `macrointerface` として宣言され、`AST` 型とともに**構文/マクロ用ライブラリ**（当面 `@Plew/Syntax`・将来は外部共有パッケージ＝後述）が提供します。**入力型 = `TopItemAst`**（注釈対象のトップレベル項の値ツリー＝`Decl`〔struct/enum/fn〕・`Impl`・`Trait`・… のタグ付き union）。マクロは `match` で対象の種別に分岐する＝対象が何かを**明示**して扱う（struct 専用 derive は `Decl` だけ扱い他を弾く）。これは「コンパイラとマクロが唯一の同一 AST を読む（1 AST 原則）」の帰結で、マクロ専用の縮小 AST を作らない。
 
 **`macrointerface` は host-only なマクロ実装契約で、通常 trait ではない。** 見た目は trait に近い要求集合だが、runtime conformance ではなく、生成コマンドが既知の契約として読む compile/host 側 interface である。したがって `where T: Derive`、`any Derive`、`impl B as Derive`、extension、trait-to-trait conformance には使えない。`macro Foo as I` の `I` は `macrointerface` として解決され、通常 trait を指定するとエラー。v1 で認める `macrointerface` は compiler/generator が package identity 付きで知る閉集合だけで、既知パッケージ以外での新規 `macrointerface` 宣言はエラーにする。
 
 ```plew
-export macrointerface Derive {
+pub macrointerface Derive {
     assoc fn derive(input: TopItemAst) -> String
 
     assoc fn deriveFromSource(source~: String, start: U64, end: U64) -> String {
@@ -52,7 +52,7 @@ export macrointerface Derive {
     }
 }
 
-export macrointerface ParameterizedDerive {
+pub macrointerface ParameterizedDerive {
     fn derive(input: TopItemAst) -> String
 
     fn deriveFromSource(source~: String, start: U64, end: U64) -> String {
@@ -66,13 +66,13 @@ export macrointerface ParameterizedDerive {
 - **設定なし → `Derive`**（要求 `assoc fn derive(input: TopItemAst) -> String`・`self` 無し）。**bare `@[X]`** で呼ぶ。Eq/Hash/All 等、derive の大半。`Self` を含まない `assoc fn` なので、インスタンスを作らずに `X.derive(input)` を一意に呼べる。
 - **設定あり → `ParameterizedDerive`**（要求 `fn derive(input: TopItemAst) -> String`・`self` = 設定構造体）。**`@[X(args)]`** で呼ぶ（`@[X()]` のように**括弧を強制**）。設定は構造体の型付きフィールドで、`self` から読む（`@[Builder(prefix: "with")]` 等）。
 
-設定あり derive の `X` は通常の構造体であり、`@[X(args)]` は通常の factory 呼び出しと同じ可視性・型検査を受ける。外部パッケージから使わせる設定 schema は、`export struct X` と公開 factory として runtime surface にも現れる。これは host-exec 専用 schema を別言語・別名前空間に逃がさず、Plew の通常の型・可視性・factory 規則で説明するための意図的なコストである。
+設定あり derive の `X` は通常の構造体であり、`@[X(args)]` は通常の factory 呼び出しと同じ可視性・型検査を受ける。外部パッケージから使わせる設定 schema は、`pub struct X` と公開 factory として runtime surface にも現れる。これは host-exec 専用 schema を別言語・別名前空間に逃がさず、Plew の通常の型・可視性・factory 規則で説明するための意図的なコストである。
 
 **`()` 規約が構文に機構を持たせる。** **bare `@[X]` は `Derive`（assoc）を、括弧つき `@[X(args)]`／`@[X()]` は `ParameterizedDerive`（インスタンス構築）を指す。** 引数を一切取らない構造体 derive も括弧を付けて `@[A()]` と書く（`()`＝「インスタンスを構築する」の合図）。bare `@[A]` と書きたければ `A` は `Derive`（assoc）の macro role を持つ。これにより、`@[X]` を見ただけでどちらの機構かが一意に決まる。
 
 ```plew
 // 設定なし derive：既存の Hash トレイトに macro role を付ける
-export trait Hash { /* ... */ }
+pub trait Hash { /* ... */ }
 pub macro Hash as Derive {
     assoc fn derive(input: TopItemAst) -> String {
         match input {
@@ -85,7 +85,7 @@ pub macro Hash as Derive {
 struct Point { }
 
 // 設定あり derive：構造体のフィールドが設定スキーマ・`@[X(args)]` で構築
-export struct Builder { pub val prefix: String }
+pub struct Builder { pub val prefix: String }
 pub impl Builder { factory }
 pub macro Builder as ParameterizedDerive {
     fn derive(input: TopItemAst) -> String { /* self.prefix を使って生成 */ return "" }
