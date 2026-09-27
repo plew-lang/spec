@@ -160,7 +160,7 @@ import ./kebab-case      // ❌ エラー: ハイフンは使用不可
 
 ## 公開と再公開
 
-宣言に `pub` を付けると、そのモジュールの外から利用可能になります。修飾なしの宣言は定義モジュール内だけで利用可能です。公開指定はトップレベル宣言・メンバとも同じ `pub` に統一し、`export` 構文は持ちません。
+宣言に `pub` を付けると、そのモジュールの外から利用可能になります。修飾なしの宣言は定義モジュール内だけで利用可能です。公開指定はトップレベル宣言・メンバとも同じ `pub` を使います。
 
 ```plew
 pub struct PublicStruct { /* ... */ }
@@ -223,7 +223,7 @@ impl X as SomeTrait { /* ... */ }
 - **外部依存の import はファイルごと**。共有スコープでも、別モジュールから持ち込む名前は各ファイルが自分で `import` する（ルートの import を子が暗黙継承しない）。外部由来の名前の出どころは常にそのファイルで見える。
 - **ディレクトリは跨いでよい**。`part` は相対ファイルパスで、ディレクトリはモジュールの単位ではなく単なる整理。
 - **`import` と `part` の使い分け（ベストプラクティス）**。既定は `import`：モジュールは非循環の層（DAG）に切る。**`part` を使うのは [無名 impl の配置](#無名-impl-の配置) のためだけ** ── 無名 `impl T`／トレイト提供メソッド `impl Trait` は型/トレイトの定義モジュールに置く必要があるので、その型の振る舞いを複数ファイルに分けたいとき `part` で同一モジュールへ綴じる。公開提供メソッドは `pub impl Trait`、内部 helper は修飾なし `impl Trait` に分ける。**`part` に書けるのは `impl` だけ**（自由関数・型・top-level `val` はモジュール root か別モジュールへ。[循環依存](#循環依存モジュールグラフは-dag)の節のとおり、相互再帰もこれで表現でき `part` に自由関数を置く理由はない）。「関連が近い」「ファイルが大きい」は `part` の理由にならない ── 層として切れるなら `import`、切れないなら振る舞いを `impl` 化して `part`。
-  - **言語制約（強制済）**：この「`part` 内は `impl` のみ」はコンパイラが強制する ── `part` ファイルに自由関数・型（`struct`/`enum`/`trait`/`newtype`）・`extern`・top-level `val`・re-export を書くとコンパイルエラー。許されるのは `impl` ブロックと構造ディレクティブ（`import`/`part`/`@[...]`）だけ。`part` の用途を無名 impl の配置に縛り、「関連が近い／大きいから part」の濫用を構造的に不能にするため。
+  - **言語制約（強制済）**：この「`part` 内は `impl` のみ」はコンパイラが強制する ── `part` ファイルに自由関数・型（`struct`/`enum`/`trait`/`newtype`）・`extern`・top-level `val`・再公開 を書くとコンパイルエラー。許されるのは `impl` ブロックと構造ディレクティブ（`import`/`part`/`@[...]`）だけ。`part` の用途を無名 impl の配置に縛り、「関連が近い／大きいから part」の濫用を構造的に不能にするため。
 
 ### import の対象はモジュールのルート
 
@@ -471,7 +471,7 @@ import @Std/Testing with { expect, expectEq, expectNe, expectApprox }
 
 > **状態 = 設計叩き台（点1 不透明ハンドル/ポインタ/共有 struct/ABI 記法・点2 数値対応・点3 文字列境界・点4 所有権規約・リンクまで一通り確定方向で記述／残るは下記「未決」）。** Plew の C-API バックエンド（libLLVM-C 等を叩く）の土台。ABI は当面 `c` のみ（`system`/WASM/`javascript` は後続）。
 >
-> **スコープ＝外部を「使う側」のみ（Plew が C を呼ぶ）。** Plew 関数を C へ「使わせる側」（export＝Plew→C 公開）は**未定**で本節に含めない（ソースの `pub` とは独立に C ABI 公開の呼出規約・マングリングを別途詰める必要があり、現状の LLVM 利用には不要なため）。
+> **スコープ＝外部を「使う側」のみ（Plew が C を呼ぶ）。** Plew 関数を C へ「使わせる側」（Plew→C 公開）は**未定**で本節に含めない（ソースの `pub` とは独立に C ABI 公開の呼出規約・マングリングを別途詰める必要があり、現状の LLVM 利用には不要なため）。
 
 `extern(c)` 境界は **Plew の保証が切れる継ぎ目**です。境界の内側（値意味論・CoW・ARC・実質 race-free）はあくまで Plew が管理するメモリについての約束で、**外部 C 世界の確保・解放・別名・スレッド安全は Plew は一切引き受けません**（"hidden cost は可・hidden meaning は不可" の原則上、ここは唱えた通り＝**生で危険なものは生で危険**と見えるべき領域）。だから FFI は**床**として最小・正直に定義し、安全性は Plew 側で `unique`＋`deinit` や `nonsendable` ラッパを被せて作ります（安全な `Array`/`String` が**コンパイラ内部の生メモリ操作**の上に安全床 `Buffer` を介して立つのと同じ"生床＋安全皮"の構図＝Plew では生操作はコンパイラ内部に隠れ、FFI ではそれが明示 opt-in の境界として露出する）。
 
@@ -500,7 +500,7 @@ FFI は **役割キーワード × ABI 選択子**で表す。`extern` は「外
 | **import 関数／不透明型** | `extern(c) { fn … ; type … }` | **C 側**（本体なし） | C を呼ぶ・C の不透明型を受け取る |
 | **共有 struct** | `repr(c) struct Foo { … }` | **Plew 側**（レイアウト記述） | C と同一レイアウトの値型（C 関数へ渡す） |
 
-> Plew 関数を C へ**公開**する側（export＝Plew→C）はスコープ外（上記「状態」参照）。本節は **C を呼ぶ／C の型を受け取る側**だけを定める。
+> Plew 関数を C へ**公開**する側（Plew→C）はスコープ外（上記「状態」参照）。本節は **C を呼ぶ／C の型を受け取る側**だけを定める。
 
 ```plew
 import @Std/Ffi with { CString }   // 文字列境界（点3）— 別途定義
@@ -596,7 +596,7 @@ repr(c) struct LLVMMCJITCompilerOptions {
 - **フィールドアクセス・JSX 構築・既定値は通常の Plew 機構そのまま**（新構文は struct ヘッダの `repr(c)` 1 つだけ）：`mut val o = <LLVMMCJITCompilerOptions OptLevel=2 />` の残りは既定 0、`o.OptLevel = 3` は通常の場所代入。
 - **sendability は通常 struct と同じ**：フィールドから構造的に導出する。raw FFI pointer / handle は sendable が既定なので、多くの `repr(c)` wrapper はそのまま `spawn` を越えられる。外部契約としてスレッド束縛がある値は `nonsendable repr(c) struct` または `nonsendable` な安全 wrapper として宣言する。
 - **`c` は C *言語*でなく C *ABI***（プラットフォーム標準の万能相互運用規約）。`repr(c)` の別レイアウトとして `repr(packed)`（詰め）等を後続 additive に足せる（property `stable` でなく contract で名付ける＝`packed` も「決定的」なので衝突しない）。
-- **向きを持たない**：`repr(c) struct` は C ABI レイアウトの値型というだけなので、`extern(c)` 関数へ渡す引数に使える。将来 export 側を定めれば同じ定義がそちらにも乗る（共有 struct は方向非依存）。
+- **向きを持たない**：`repr(c) struct` は C ABI レイアウトの値型というだけなので、`extern(c)` 関数へ渡す引数に使える。将来 C への公開側を定めれば同じ定義がそちらにも乗る（共有 struct は方向非依存）。
 
 ポインタ越しに渡す「`&opts`」は **`inout` で書ける**（`CPtr` を表に出さない）：
 
@@ -713,5 +713,5 @@ val m = LLVMModuleCreateWithNameInContext(cname.ptr, ctx)  // 呼び出し中有
 
 - **プラットフォーム幅型の変換規則**：`as`（無損失）と `TryFrom`（可謬）の閾値の厳密化・`CSize`↔`USize`↔`U64` の関係。
 - **ハンドルの等価**：ポインタ同一性で `Eq` を提供するか。当面は非提供で開始し additive 可。
-- **使わせる側（export＝Plew→C 公開）＝未定**：Plew 関数を C へ公開する綴り・マングル抑制・可視性（ソース上の `pub` とは別の C ABI 公開契約）・呼出規約の既定。C ABI 公開の記法は要設計・libLLVM-C 利用には不要なので本節スコープ外。
+- **使わせる側（Plew→C 公開）＝未定**：Plew 関数を C へ公開する綴り・マングル抑制・可視性（ソース上の `pub` とは別の C ABI 公開契約）・呼出規約の既定。C ABI 公開の記法は要設計・libLLVM-C 利用には不要なので本節スコープ外。
 - **型エイリアス**（`type FooRef = CPtr[FooOpaque]`）と **`repr(packed)`/`callconv` 軸**：当面は不透明 `type` と `repr(c)` のみ、両者は後続 additive。
