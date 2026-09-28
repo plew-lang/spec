@@ -355,5 +355,3 @@ fn f() {
 - **`sendable fn` と `spawn` だけが例外**：スレッド境界を越えるキャプチャは、v1 では**コピー可能かつ sendable な値の不変スナップショット**に限られます。`sendable fn` は上記のとおり宣言地点で検査し、`mut val` を参照キャプチャした通常の `fn` は nonsendable です。ベア `spawn { }` はそれ自体が明示的なスレッド境界なので、コピー可能かつ sendable な値だけをスナップショットで暗黙キャプチャします（`unique`/`MutableRef`/`borrow` は不可。`Ref[T]` は `T: sendable` なら可）→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)。
 - **`unique` 値はキャプチャできない**（閉包へ move する構文は当面なし）。
 - 共有参照を使う動機はクロージャ環境の状態ではなく、[`unique`](03-values.md#uniqueコピー不可型) 値を複数箇所で共有して取り回したいときや、意図した**循環参照**を作るときなど、独立した保有者の間でヒープ上の同一性を共有したい場合です（→ [Ref / MutableRef / WeakRef](03-values.md#ref--mutableref--weakref共有参照)）。閉包が保持する共有参照で循環ができ得る構造は [`WeakRef` / `WeakMutableRef`](03-values.md#ref--mutableref--weakref共有参照) で断ち切ります。
-
-**v1 実装境界**：現行実装が受ける通常クロージャ capture は、トップレベル以外の外側ローカルについて、copyable な scalar / `String` / `Array` / `Ref` / `WeakRef` / 非 generic・非 unique の struct、および scalar `mut val` の参照 capture に限ります。nested closure、unique 値、generic instantiation、enum 値、function-typed 値、非スカラー `mut val`（array/struct/string）の capture は loud reject します。これらはすべて、環境表現・move capture・構造的 sendability・drop glue を mid-ir で統一してから受理範囲を広げます。
