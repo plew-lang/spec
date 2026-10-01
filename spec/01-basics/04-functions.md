@@ -28,8 +28,8 @@ val g = fn(value: I32) -> I32 { return double(value: value) }  // OK
 `diverge fn` は、正常には呼び出し元へ戻らないことを**宣言で明示する**修飾子です。`panic` や終了処理を構文・隠れた intrinsic として特別扱いせず、呼び出し先のこの契約だけから制御フローを決めます。
 
 ```plew
-import @Std/Io with { eprint }
-import @Std/Process with { ExitCode, exit }
+use @Std/Io only { eprint }
+use @Std/Process only { ExitCode, exit }
 
 diverge fn fatal(message~: String) {
     eprint("fatal: {message}\\n")
@@ -105,7 +105,7 @@ min(p, q)                                 // 全引数が無ラベル
 **名付け**
 
 - **値を表す名詞で名付ける。一文字・暗号名は使わない**（`c`/`e`/`n`/`st` は不可 ── `comp`/`expr`/`count`/`state`）。Go の「自明だから短く」は **Plew のパラメータには適用しません**（明示こそ強制ラベルの目的）。短くしたいなら `~:` で **省略**するのであって、略語にはしません。
-- **名前は名詞。前置詞をラベルにしない**（`to`/`at`/`with`/`in`/`by`）。名前は本体ローカルも兼ねるので、変数として意味を成す語でなければなりません。前置詞は英語ラベルとしては読めても、ローカルとしては無意味です ── 名詞を採ります。
+- **名前は名詞。前置詞をラベルにしない**（`to`/`at`/`only`/`in`/`by`）。名前は本体ローカルも兼ねるので、変数として意味を成す語でなければなりません。前置詞は英語ラベルとしては読めても、ローカルとしては無意味です ── 名詞を採ります。
   - `push(value: A, index: I64)` ○ ／ `push(value: A, to: I64)` ✗（`to` は本体で意味を成さない）
 
 **ラベルが冗長になるとき（→ `~:` で省略、または主語ならメソッドのレシーバに）**

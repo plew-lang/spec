@@ -58,7 +58,7 @@ while Optional.Some(value: val line) = reader.next() && !line.isEmpty() {
 ```plew
 val result = match expression {
     42                                      => "the answer"
-    Color.Red(intensity: val intensity)  => "red with intensity {intensity}"
+    Color.Red(intensity: val intensity)  => "red only intensity {intensity}"
     (val x, val y)                          => "record x={x}, y={y}"
     _                                       => "default case"
 }
@@ -214,10 +214,10 @@ guard Optional.Some(value: val data) = maybeData && data.isValid() {
 
 正常に呼び出し元へ戻らない関数は [`diverge fn`](../01-basics/04-functions.md#diverge-fn--正常-return-しない関数) と宣言します。これは `return`/`break` と同じく、その先へ進まない制御フローであり、呼び出しは任意の期待型の位置に置けます。回復可能な失敗には使わず（それは `Result`/`try`）、回復不能な不変条件違反だけを loud に停止します。catch はできません。
 
-`panic` は `@Std/Core` が公開する `diverge fn panic(message~: String)` という**通常の関数**です。キーワードでも lang item でもないため、使う側は明示的に import します。
+`panic` は `@Std/Core` が公開する `diverge fn panic(message~: String)` という**通常の関数**です。キーワードでも lang item でもないため、使う側は明示的に use します。
 
 ```plew
-import @Std/Core with { panic }
+use @Std/Core only { panic }
 
 guard Optional.Some(value: val config) = maybeConfig {
     panic("config is missing")   // guard 本体は発散する必要がある
@@ -238,8 +238,8 @@ val config = match maybeConfig {
 
 ## assert ── 条件付き panic
 
-`assert` は `@Std/Core` が公開する、任意の診断 message を取れる通常の `fn` です。条件が偽のとき内部で [`panic`](#発散する関数と-panic) しますが、`panic` を利用側が import している必要はありません。`assert(x > 0)` は真なら何もしない・戻り `()`。回復不能なバグ＝**満たされて当然の不変条件**を、破れた瞬間に大きな声で落とすために使います。
+`assert` は `@Std/Core` が公開する、任意の診断 message を取れる通常の `fn` です。条件が偽のとき内部で [`panic`](#発散する関数と-panic) しますが、`panic` を利用側が use している必要はありません。`assert(x > 0)` は真なら何もしない・戻り `()`。回復不能なバグ＝**満たされて当然の不変条件**を、破れた瞬間に大きな声で落とすために使います。
 
 - **常時 ON（全ビルド共通）**。最適化レベルで意味論は変わりません ── [整数オーバーフロー](../01-basics/02-basic-types.md#整数の実行時セマンティクスオーバーフロー)・0 除算・NaN 比較の panic と同じ「リリースでだけ落ちないバグを作らない」方針（観測挙動は唱えた意味から逸れない）。Rust の `assert!`／Swift の `precondition` に対応します。
-- 内部は `panic` ゆえ **abort**（巻き戻さない・`deinit` は走らない・catch 不可）。ただし `panic` と違い**常に発散する関数ではなく**、条件が真なら素通りする**ただの関数呼び出し**です（構文の特別扱いは不要）。構文が参照しない＝**lang item ではない**ので、`print` 同様 `import` が要ります。
+- 内部は `panic` ゆえ **abort**（巻き戻さない・`deinit` は走らない・catch 不可）。ただし `panic` と違い**常に発散する関数ではなく**、条件が真なら素通りする**ただの関数呼び出し**です（構文の特別扱いは不要）。構文が参照しない＝**lang item ではない**ので、`print` 同様 `use` が要ります。
 - **`debugAssert`（最適化ビルドで除去される段）は当面持ちません＝additive 保留**。重い不変条件チェックを本番で外したい需要はありますが、除去段は「観測挙動が唱えた意味から逸れない」方針と**唯一緊張する部分**（壊れたプログラムの loud 化を遅らせる＝リリースでだけ素通りする）。入れるなら *呼び出し位置で除去段と分かる別名* `debugAssert` ＋ ビルドプロファイル定義を伴って後から非破壊で足します。常時チェックが既定で、除去は明示的に opt-in。

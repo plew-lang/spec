@@ -64,7 +64,7 @@ pub macrointerface ParameterizedDerive {
 **derive macrointerface は「設定（引数）の有無」で 2 つに分かれる。** derive の唯一の本質的な軸は設定を持つかどうかで、それが invocation 構文に直結する：
 
 - **設定なし → `Derive`**（要求 `assoc fn derive(input: TopItemAst) -> String`・`self` 無し）。**bare `@[X]`** で呼ぶ。Eq/Hash/All 等、derive の大半。`Self` を含まない `assoc fn` なので、インスタンスを作らずに `X.derive(input)` を一意に呼べる。
-- **設定あり → `ParameterizedDerive`**（要求 `fn derive(input: TopItemAst) -> String`・`self` = 設定構造体）。**`@[X(args)]`** で呼ぶ（`@[X()]` のように**括弧を強制**）。設定は構造体の型付きフィールドで、`self` から読む（`@[Builder(prefix: "with")]` 等）。
+- **設定あり → `ParameterizedDerive`**（要求 `fn derive(input: TopItemAst) -> String`・`self` = 設定構造体）。**`@[X(args)]`** で呼ぶ（`@[X()]` のように**括弧を強制**）。設定は構造体の型付きフィールドで、`self` から読む（`@[Builder(prefix: "only")]` 等）。
 
 設定あり derive の `X` は通常の構造体であり、`@[X(args)]` は通常の factory 呼び出しと同じ可視性・型検査を受ける。外部パッケージから使わせる設定 schema は、`pub struct X` と公開 factory として runtime surface にも現れる。これは host-exec 専用 schema を別言語・別名前空間に逃がさず、Plew の通常の型・可視性・factory 規則で説明するための意図的なコストである。
 
@@ -90,7 +90,7 @@ pub impl Builder { factory }
 pub macro Builder as ParameterizedDerive {
     fn derive(input: TopItemAst) -> String { /* self.prefix を使って生成 */ return "" }
 }
-@[Builder(prefix: "with")]       // = <Builder prefix="with" /> を構築して .derive(input)
+@[Builder(prefix: "only")]       // = <Builder prefix="only" /> を構築して .derive(input)
 struct Config { }
 ```
 
