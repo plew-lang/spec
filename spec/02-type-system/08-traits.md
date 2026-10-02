@@ -332,7 +332,8 @@ fn f(a: any Eq, b: any Eq) {        // 型として持つ・配列に入れる�
 > **`Clone` トレイトは持ちません**：値意味論（CoW）では代入・受け渡しが独立コピー（`mut val b = a`）なので明示的な複製は不要です。共有 identity が要るときだけ [`Ref` / `MutableRef`](../01-basics/03-values.md#ref--mutableref--weakref共有参照)（コピーで共有）→ [値・変数・所有権](../01-basics/03-values.md)。
 
 - `Hash: Eq`: ハッシュ値計算。`Dictionary`/`Set` のキー境界で、衝突解決に等価比較が要るため `Eq` をスーパートレイトに持つ（`Ord: Eq` と同じ形）。算法は Rust 流の `Hasher` ストリーミング方式に倒すが、正確なシグネチャはコアライブラリ設計時に確定（`@[Hash]` で導出可）
-- `Format` / `FormatTo`: 文字列を返す方式／出力先へ書く方式の書式化。直接実装はどちらか一方。`Format` から `FormatTo` へ自動準拠し、補間は `FormatTo` を要求する。両経路に共通の文字列化は `toString`（正典・未確定の直接出力契約は → [文字列](../01-basics/02-basic-types.md#変数展開)）。
+- `FormatOptions`: 失敗しない引数なしfactoryによるデフォルト書式設定の構築。詳細は [文字列](../01-basics/02-basic-types.md#変数展開)。
+- `Format` / `FormatTo`: 文字列を返す方式／出力先へ書く方式の書式化。関連型 `Options` は `FormatOptions` に準拠し、文字列ではなく型付きの設定を受け取る。直接実装はどちらか一方。`Format` から `FormatTo` へ自動準拠し、補間は `FormatTo` を要求する。両経路に共通の文字列化は `toString`（正典・未確定の直接出力契約は → [文字列](../01-basics/02-basic-types.md#変数展開)）。
 
 ### 演算子・変換・Optional 系トレイト
 
