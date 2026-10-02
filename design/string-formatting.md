@@ -2,7 +2,7 @@
 
 ## 現在の契約と実装状態
 
-採用済みの言語契約は仕様本文へ反映済みです。この文書は実装・検証課題を保持し、仕様を重複定義しません。現行Stdは `Format.format(format: String) -> String` のままであり、新API・補間・空enum対応は未実装です。
+採用済みの言語契約は仕様本文へ反映済みです。この文書は実装・検証課題を保持し、仕様を重複定義しません。実装の進捗とは区別して、以下の契約と検証項目を完成条件とします。
 
 - [Format・TextOutput・型付きOptions・String factory・補間構文と評価順](../spec/01-basics/02-basic-types.md#変数展開)
 - [空enumとInfallible](../spec/02-type-system/05-structs-enums.md#空の列挙型)
