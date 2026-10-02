@@ -72,18 +72,32 @@ trait FormatOptions {
 - Optionsの構築は通常のfactory呼び出しです。省略時も呼び出しごとに評価し、副作用を保持します。値の妥当性検査や失敗し得る構築は通常のAPI・エラー処理で扱い、補間専用の文字列解析・失敗伝播を設けません。
 - 外部設定などの文字列をOptionsへ変換するAPIは別途定義できます。補間は文字列パーサーの提供を要求しません。
 
-## 明示的な文字列化
+## Stringのfactoryによる文字列化
 
-`Format` の共通提供メソッドとして **`toString`** を用意します。Optionsを受け取り、省略時は引数なしfactoryを使います。文字列構築用の出力先へ `format` で書き込み、完成した `String` を返す方向です。正確なシグネチャ・失敗条件は未確定です。
-
-`format` は出力先へ書く必須実装メソッド、`toString` は利用者向けの文字列化操作です。
+明示的な文字列化はStringの無名factoryへ統一します。Format準拠型への共通 `toString` メソッドは提供しません。表示能力はFormat、Stringの生成はStringのfactoryが担当します。
 
 ```plew
-val text = vector.toString()
-val configured = vector.toString(options: options)
+val text = <String value=vector />
+val detailed = <String value=vector options=<precision=2 /> />
 ```
 
-通常の文字列補間の結果は完成済みの `String` です。各要素に同じ文字列構築先を渡せますが、最終結果の格納領域まで不要になるわけではありません。
+- 入力ラベルは `value` とし、`From` の変換用ラベル `from` と区別します。
+- Options省略時は、入力型の関連型 `Options` の引数なしfactoryを呼びます。明示Optionsには同じ関連型を期待型として与えます。
+- factoryは失敗しない文字列構築先を用意して `value.format` を呼び、`Result[(), Infallible].value()`で成功を取り出し、完成したStringを返します。
+- 補間は各要素に同じ文字列構築先を渡せます。各要素をこのString factoryで個別に文字列化してから連結することを要求しません。最終結果の格納領域は必要です。
+
+宣言の概念形は以下です。factory自身の型引数・関連型のデフォルト構築を含む正確な宣言可否は確認が必要ですが、利用側APIと責務の方針は採用済みです。
+
+```plew
+pub impl String {
+    factory[T](
+        value: T,
+        options: T.Options = </>
+    ) where T: Format {
+        // 文字列構築先を用意し、formatで書き込んで完成したStringを返す
+    }
+}
+```
 
 ## 定数評価との関係
 
@@ -123,7 +137,7 @@ pub impl[T] Result[T, Infallible] {
 
 以下は採用済みの関係とは区別し、実装前に契約を確定します。
 
-- `toString` の正確なシグネチャとデフォルト引数、および関連型・factory要件を含むtrait宣言全体。
+- String factoryの型引数・関連型のデフォルト構築を含む宣言の対応確認、および関連型・factory要件を含むtrait宣言全体の整合確認。
 - Options式の構文境界、および補間対象・Options・書き込みの評価順。
 
 ## 後回しにする事項
@@ -154,7 +168,7 @@ pub impl[T] Result[T, Infallible] {
 ## レビューの確認点
 
 - `TextOutput`の失敗とOptionsの通常の構築失敗が混同されていないか。
-- 失敗しない出力先から、通常の補間・`toString`まで一貫した型付けができるか。
+- 失敗しない出力先から、通常の補間・String factoryまで一貫した型付けができるか。
 - 出力先の更新・寿命・副作用順序を通常のPlewの規則で説明できるか。
 - 一時的なString値とヒープ確保を区別し、中間確保・コピーを省く実装経路があるか。
 - 構築型の推論、コロンの構文境界、空指定の扱いが曖昧でないか。
