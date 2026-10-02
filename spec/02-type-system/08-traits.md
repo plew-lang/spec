@@ -333,7 +333,7 @@ fn f(a: any Eq, b: any Eq) {        // 型として持つ・配列に入れる�
 
 - `Hash: Eq`: ハッシュ値計算。`Dictionary`/`Set` のキー境界で、衝突解決に等価比較が要るため `Eq` をスーパートレイトに持つ（`Ord: Eq` と同じ形）。算法は Rust 流の `Hasher` ストリーミング方式に倒すが、正確なシグネチャはコアライブラリ設計時に確定（`@[Hash]` で導出可）
 - `FormatOptions`: 失敗しない引数なしfactoryによるデフォルト書式設定の構築。詳細は [文字列](../01-basics/02-basic-types.md#変数展開)。
-- `Format` / `TextOutput`: 出力先へ書く書式化と、その出力先。型付きOptions・`Output.Error`・共通 `toString` の設計は [設計メモ](../../design/string-formatting.md) を参照（未実装）。
+- `Format` / `TextOutput`: 出力先へ書く書式化と、その出力先。型付きOptions・`Output.Error`・String factoryによる文字列化は [文字列](../01-basics/02-basic-types.md#変数展開) を参照。
 
 ### 演算子・変換・Optional 系トレイト
 

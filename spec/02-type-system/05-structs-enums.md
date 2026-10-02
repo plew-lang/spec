@@ -37,6 +37,16 @@ pub enum Color[T] where T: Format {
 
 **`nonsendable enum`**：payload の型に依存しないスレッド束縛を表すときは `nonsendable` を前置できます。全バリアントが payload を持たない、または全 payload が sendable でも、この enum 自身は実スレッド境界を越えません。逆に nonsendable な payload を持つ enum は明示がなくても構造的に nonsendable です。肯定形の `sendable enum` はなく、通常の enum は payload から sendability を自動導出します（→ [sendable / nonsendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
+### 空の列挙型
+
+バリアントを持たないenumを定義できます。値は構築不能であり、空のstructやユニット `()` のような「値が一つある型」とは異なります。標準ライブラリは、失敗しない処理のエラー型として公開の空enumを提供します。
+
+```plew
+pub enum Infallible {}
+```
+
+Infallibleという名前への特例ではなく、一般の空enumの規則です。一般のNever型や任意型への暗黙変換を導入するものではありません。空enumの値に対する [空match](../03-expressions/11-control-flow.md#網羅性rust-流) はアーム0個で網羅的となり、正常完了する経路を持ちません。
+
 ## フィールドの統一原則
 
 構造体と列挙型バリアントは、どちらも**名前付きフィールド**のみを持ちます。位置指向の無名ペイロード（`Some(T)` のようなもの）は書けません。生成と分解は両者で同じ構文に従います。**宣言だけは異なり**、バリアントのフィールドは修飾子なしの `field: Type` です（理由は下記）。

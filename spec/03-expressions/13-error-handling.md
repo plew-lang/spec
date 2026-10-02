@@ -45,3 +45,27 @@ impl GeneralError as From[IoError] {
 ```plew
 val v = maybeValue.unwrap()  // 空なら実行時エラー。基本は使わない
 ```
+
+## Resultの値の取り出し
+
+通常の `Result[T, E]` は次のAPIを提供します。
+
+| メソッド | 結果 |
+|---|---|
+| `ok() -> Optional[T]` | Okの成功値をSomeで返し、ErrならNone。エラー情報を落とす |
+| `err() -> Optional[E]` | Errのエラー値をSomeで返し、OkならNone。成功値を落とす |
+
+`Result[T, Infallible]` にだけ `value() -> T` を提供します。エラー型が失敗し得る型に変われば呼び出しはコンパイルエラーです。panicによるunwrapではなく、構築不能なエラー値を空matchで除去します。
+
+```plew
+pub impl[T] Result[T, Infallible] {
+    fn value() -> T {
+        return match self {
+            Result.Ok(value: val value) => value
+            Result.Err(error: val error) => match error {}
+        }
+    }
+}
+```
+
+これらは通常の読み借用 `fn` で、元のResultを消費・変更しません。現在のgenericのコピー可能型制限に従います。`ok()`と`value()`は別APIであり、エラー型によって同名メソッドの戻り値をOptionalから裸のTへ切り替えません。失敗しない文字列構築先は `Error = Infallible` とし、通常の補間・String factoryは完成したStringを返します。

@@ -329,7 +329,7 @@ extension ExtraIterOps {             // 第三者が Iterator に足す追加メ
 
 extension ToStr {
     impl Format as ToString {        // トレイト間準拠：self は Self: Format
-        fn toString() -> String { return self.format(format: "") }
+        fn toString() -> String { return <String value=self /> }
     }
 }
 ```
