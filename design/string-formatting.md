@@ -95,15 +95,34 @@ Optionsの構築は一般の最適化の対象であり、フォーマット専�
 
 作成不能な空enum `Infallible` を導入し、失敗しない文字列構築先の関連型を `type Error = Infallible` とする方針を採用する。一般のNever型や任意型への暗黙変換の導入とは分ける。空enumの構築不能性と、空matchの網羅性・後続への到達不能性を実装する必要がある。
 
-`Result[T, Infallible]` の成功値は、Okから取り出し、Errのpayloadに対する空matchで存在しない経路を除去する。panicによるforce-unwrapにはしない。取り出しメソッドの名前・unique対応を含む正確な宣言は未確定。
+`Result[T, Infallible]` の成功値は、専用の `value() -> T` で取り出す。Okから値を返し、Errのpayloadに対する空matchで存在しない経路を除去する。panicによるforce-unwrapにはしない。
 
 特定のエラー型に対するimplは、既存のgeneric仕様に従って `impl[T] Result[T, Infallible]` と書く。`where E = Infallible` のような型等価述語は導入しない（[Where句](../spec/02-type-system/06-generics.md#where-句)）。
+
+```plew
+pub impl[T] Result[T, Infallible] {
+    fn value() -> T {
+        return match self {
+            Result.Ok(value: val value) => value
+            Result.Err(error: val error) => match error {}
+        }
+    }
+}
+```
+
+一般の `Result[T, E]` には以下の対称なAPIを提供する。
+
+- `fn ok() -> Optional[T]`：Okなら成功値をSomeで返し、ErrならNoneを返す。エラー情報を捨てる。
+- `fn err() -> Optional[E]`：Errならエラー値をSomeで返し、OkならNoneを返す。成功値を捨てる。
+
+`ok()`／`err()`は情報を落とす変換、`value()`は失敗不能なResultの成功値取り出しとして名前を分ける。エラー型によって同名メソッドの戻り型をOptionalから裸のTへ切り替えない。通常のResultには `value()` を提供せず、エラー型が失敗し得る型へ変われば呼び出しはコンパイルエラーとなる。
+
+現在のgeneric型引数はコピー可能型に限定されるため、これらは通常の `fn` とする。元のResultを消費・変更せず、値意味論に従って結果を返す。unique型引数の対応は将来の `allowUnique` と合わせて検討し、今回の必須要件にはしない。`ok()`／`err()`は一般のResult APIであり、書式化のためにエラーを黙って捨てる用途には使わない。
 
 ## 未確定事項
 
 以下は採用済みの関係とは区別し、実装前に契約を確定します。
 
-- `Infallible`と空matchの実装、および `Result[T, Infallible]` の成功値取り出しAPIの名前・正確な宣言。
 - `toString` の正確なシグネチャとデフォルト引数、および関連型・factory要件を含むtrait宣言全体。
 - Options式の構文境界、および補間対象・Options・書き込みの評価順。
 
