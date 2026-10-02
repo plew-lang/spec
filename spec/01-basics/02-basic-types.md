@@ -130,24 +130,40 @@ val full = "Hello, " + name + "!"   // 新しい String（左結合）
 
 ### 変数展開
 
-文字列内で `{ 式 }` による変数展開が可能です。補間が要求する準拠は常に **`FormatTo`** です。`Format` からの自動準拠も利用できます。波括弧の中には値式を書けます（ブロック式・`match` 式を除く）。書式指定は文字列ではなく、対象型が定める **型付きOptionsの値**です。
+文字列内で `{ 式 }` による変数展開が可能です。補間が要求する準拠は **`Format`** です。波括弧の中には値式を書けます（ブロック式・`match` 式を除く）。書式指定は文字列ではなく、対象型が定める **型付きOptionsの値**です。
 
 ```plew
 val message = "Hello, {name}! You are {age} years old."
 val formatted = "Vector = {vector: options}"
 ```
 
-#### 書式化の二つの実装方式
+#### 書式化の設計メモ
 
-型の表示は **`Format` と `FormatTo` のどちらか一方を直接実装**します。
+表示用traitは **`Format` 一つ**に統一し、出力先へ書く方式にします。文字列を返す方式との二重化、自動準拠、二重実装の衝突規則は設けません。以下は実装前の設計メモであり、現行Stdの実装を示すものではありません。
 
-- **`Format`**：完成した `String` を返す、手軽な実装方式です。
-- **`FormatTo`**：`formatTo` が出力先を `inout` で受け、Optionsに従って書く方式です。表示結果を一時的な `String` にまとめずに実装できます。内部の文字列生成を禁止したり、無確保・高速性を保証したりする契約ではありません。
-- 両traitは関連型 `Options` を持ち、`FormatOptions` 準拠を要求します。`Format` の実装メソッドは `format(options: Options) -> String`、`FormatTo` の実装メソッドは出力先と `options: Options` を受け取る形です。出力先・正確な宣言全体は下記の未確定事項です。
+```plew
+pub trait TextOutput {
+    type Error
 
-`Format` を実装すると、同じOptions型を引き継ぎ、`format(options: 指定)` の結果を出力先へ書く `FormatTo` 準拠を自動提供します。**`Format` と `FormatTo` を両方直接実装すると準拠の衝突エラー**になります。補間側が二つの実装の優先順位を選ぶ設計ではありません。`FormatTo` だけを実装した型に `Format` 準拠を逆向きに自動提供することもありません。
+    inout fn write(text~: String) -> Result[(), Error]
+}
 
-簡易実装から直接書き込みへ移る場合は、`Format` の実装を `FormatTo` に置き換えます。Optionsの契約を維持すれば、利用者の補間・`toString` は同じままです。
+pub trait Format {
+    type Options: FormatOptions
+
+    fn format[Output](
+        output: inout Output,
+        options: Options
+    ) -> Result[(), Output.Error]
+        where Output: TextOutput
+}
+```
+
+- 出力先は呼び出し元の状態を更新するため `inout` で受けます。メソッドをgenericにし、一つのFormat実装で異なる出力先を扱います。
+- 失敗は出力先の関連型 `Error` で表し、そのまま伝播します。固定の `FormatError` へ変換して詳細を失う設計にはしません。`Output.Error` は制約から出どころが一意なので `Output#TextOutput.Error` と明示する必要はありません。
+- 表示実装は同じ出力先へ断片や子要素を順に書けます。`write(String)` は一時文字列のヒープ確保を要求しません。リテラルは定数領域を参照でき、値引数もデータの複製を意味しません。既存文字列の共有・短い文字列の格納・安全な確保除去などは内部実装の課題です。
+- 数値を一度Stringへ変換してから書けば、その生成・コピーのコストは残り得ます。標準型の生成処理も含めて検証します。`writeScalar` や借用スライスを必須APIとして追加することは決めていません。
+- `output.write("({self.x}, {self.y})")` は通常の意味では補間全体のStringを構築してから書きます。途中の副作用・panic・出力失敗との順序を変える逐次出力への変換はできません。一行で直接出力する補助APIは別途検討します。
 
 #### 型付きOptionsとデフォルト構築
 
@@ -167,16 +183,16 @@ trait FormatOptions {
 
 #### 明示的な文字列化
 
-`FormatTo` の共通提供メソッドとして **`toString`** を用意します。Optionsを受け取り、省略時は引数なしfactoryを使います。文字列構築用の出力先へ `formatTo` で書き込み、完成した `String` を返す方向です。正確なシグネチャ・失敗条件は未確定です。
+`Format` の共通提供メソッドとして **`toString`** を用意します。Optionsを受け取り、省略時は引数なしfactoryを使います。文字列構築用の出力先へ `format` で書き込み、完成した `String` を返す方向です。正確なシグネチャ・失敗条件は未確定です。
 
-`format` は簡易方式の必須実装メソッドです。全対応型に共通する利用者向け文字列化操作は `toString` です。自動の橋渡しは `Format.format` を呼び、`toString` を呼んで循環してはいけません。
+`format` は出力先へ書く必須実装メソッド、`toString` は利用者向けの文字列化操作です。
 
 ```plew
 val text = vector.toString()
 val configured = vector.toString(options: options)
 ```
 
-通常の文字列補間の結果は完成済みの `String` です。`FormatTo` は要素ごとの中間文字列を避けるための契約であり、補間全体の最終結果の格納領域まで不要にするものではありません。`Format` 経由の橋渡しでは返却された中間文字列を経由します。
+通常の文字列補間の結果は完成済みの `String` です。各要素に同じ文字列構築先を渡せますが、最終結果の格納領域まで不要になるわけではありません。
 
 #### 定数評価との関係
 
@@ -188,11 +204,12 @@ Optionsの構築は一般の最適化の対象であり、フォーマット専�
 
 以下は採用済みの関係とは区別し、実装前に契約を確定します。
 
-- 出力先の抽象・型名、`formatTo` の正確なシグネチャ（genericの形と戻り値を含む）。
+- 失敗しない文字列構築先の `Error` をどう表すか。値を作れない型と、その `Result` から成功値を取り出す仕組みを確認し、`toString` が `String` を返せる形を決めます。
+- 出力先の書き込み契約（全量受付・部分出力・flushとの境界）を確定します。
 - 書き込み失敗とフォーマット処理自身の失敗条件。Optionsの通常の構築失敗とは区別します。I/Oの失敗を理由に、通常の `toString` まで `Result` にする設計は避けます。
 - `toString` の正確なシグネチャとデフォルト引数、および関連型・factory要件を含むtrait宣言全体。
 - 空のOptions指定 `{value:}` をデフォルトとして認めるか。Options式の構文境界、および補間対象・Options・書き込みの評価順。
-- `FormatTo` の本体でも補間を一行で直接出力できるAPI。通常の `write(String)` に補間結果を渡すだけでは中間文字列が生じるため、補間を受け取る契約と、評価・出力・失敗の順序を別途定めます。
+- `Format` の本体でも補間を一行で直接出力できるAPI。通常の `write(String)` に補間結果を渡すだけでは中間文字列が生じるため、補間を受け取る契約と、評価・出力・失敗の順序を別途定めます。
 
 #### 補間の構文
 
