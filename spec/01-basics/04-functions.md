@@ -37,9 +37,9 @@ diverge fn fatal(message~: String) {
 }
 ```
 
-- free 関数・読み借用メソッド・関連関数・trait requirement にだけ指定できる。`-> ReturnType` は書けない。許可形は `diverge fn` と `assoc diverge fn` のみで、`inout diverge fn`／`move diverge fn` は不可である。呼び出し元へ戻らないため writeback／消費後の accessibility は観測できず、意味を持たない mode を増やさない。`async`／`spawn` との併用も不可。trait requirement とその `impl` の宣言は一致しなければならない。selector／overload の識別子ではないため、同じ selector に通常の `fn` と `diverge fn` を重ねて宣言できない。
-- 本体は通常の `return` または素通りで完了できない。各経路は、解決済み callee が `diverge fn` である呼び出し、または到達可能な `break` を持たない `loop { … }`／`while true { … }` で終わる必要がある。呼び出しは任意の期待型の位置に置ける。
-- factory・クロージャ・関数型には指定できない。Plew に一般の `Never` 型はなく、`Optional[Never]` のような型引数、field／引数／associated type／関数型の戻り位置にも現れない。
+- free 関数・読み借用メソッド・関連関数・trait requirement・無名関数・関数型に指定できる。`-> ReturnType` は書けない。名前付き宣言の許可形は `diverge fn` と `assoc diverge fn` で、`inout diverge fn`／`move diverge fn` は不可である。呼び出し元へ戻らないため writeback／消費後の accessibility は観測できず、意味を持たない mode を増やさない。`async`／`spawn` との併用も不可。trait requirement とその `impl` の宣言は一致しなければならない。selector／overload の識別子ではないため、同じ selector に通常の `fn` と `diverge fn` を重ねて宣言できない。
+- 本体は通常の `return` または素通りで完了できない。正常return・素通りがないことを本体のフローから検査する。diverge呼び出し・空match・非終了loop等で正常に戻らない本体を認めるが、関数を抜けるreturnは認めない。呼び出しは値を生成せず、代入・引数等の値位置には置けない。分岐の発散アームとしては使える。詳細は[値利用と発散](../03-expressions/11-control-flow.md#値利用と発散)。
+- factoryには指定できない。Plewに一般のNever型はなく、発散結果を型引数へ代入しない。ただし発散する関数値は通常の値なので、その関数型はfield・引数・戻り値・associated type・型引数で使える。
 - `async diverge fn` と `spawn diverge fn` は当面禁止する。非同期 task の非完了・worker の寿命は、同期的な「呼び出し元へ戻らない」とは別の意味論として定義する。
 
 ## 戻り値（`return` は明示）
@@ -238,6 +238,25 @@ numbers.mapEach(transform: doubleValue)   // ❌ 型エラー: fn(value:) は fn
 val f: fn(n: I32) -> I32 = fn(n) { return n * 2 }   // n: I32 の「: I32」は推論。名前 n はラベルとして一致が要る
 ```
 
+### 発散するクロージャと関数型
+
+`diverge fn(引数) { 本体 }`で発散する無名関数を作ります。型は`diverge fn(ラベル: 型, ...)`です。戻り型は書きません。無ラベル位置の型は通常の関数型と同じく裸の型で表します。
+
+```plew
+val stop: diverge fn() = diverge fn() { panic("stop") }
+val copy = stop
+val wrapped = fn() -> I64 { stop() }
+stop() // 呼び出しが発散する。後続に処理を書けない
+```
+
+生成・保存・コピー・引数渡し・返却は通常の値操作であり、それ自体は発散しません。`fn() -> diverge fn()`は発散する関数値を正常に返す関数です。呼び出しの完了契約は、呼び出される最外側の関数型から判断します。
+
+通常関数型と発散関数型の間に暗黙変換はありません。通常fnの本体が常にpanicしても、本体解析や期待型によってdivergeへ昇格しません。必要なら上のwrappedのように通常の関数で明示的に包みます。引数型の推論は通常どおり行えますが、diverge指定そのものを推論で補いません。
+
+関数型の同一性には完了契約も含みます。引数として受ける関数型の違いは、通常の具体引数型によるoverload規則に従います。宣言自身のdiverge有無だけでoverloadできない規則とは別です。genericのTには`diverge fn()`という関数値型を入れられますが、`fn() -> T`のTへ発散結果を入れて適合させることはできません。
+
+本体の検査は名前付きdiverge fnと共通です。キャプチャ・escape・unique制限・借用・排他の規則は通常のクロージャと同じであり、正常に戻らないことを理由に免除しません。async/spawnとの併用禁止、C callbackの適格性・ABIの規則は、この拡張で解除しません。
+
 ### sendable クロージャ
 
 別スレッドへ安全に送れる関数値は、型とリテラルの両方で **`sendable fn`** と明示します。
@@ -267,7 +286,9 @@ val unknown = fn() { calculate() }
 val rejected: sendable fn() = unknown             // エラー：保証を後から獲得できない
 ```
 
-`sendable fn` はキャプチャ環境も sendable でなければなりません。
+`sendable diverge fn(...)`を型・リテラルの両方で許可します。修飾順は`sendable diverge fn`です。引数と発散契約を保ったままsendable保証だけを消して`diverge fn(...)`へ変換できます。通常の`fn(...)`へ発散契約を消す変換はできません。逆方向のsendable保証獲得も暗黙には行いません。
+
+`sendable fn`と`sendable diverge fn`はキャプチャ環境もsendableでなければなりません。
 
 - キャプチャなしは sendable。
 - sendable な `val` は**値としてコピー**して不変スナップショットをキャプチャできる。

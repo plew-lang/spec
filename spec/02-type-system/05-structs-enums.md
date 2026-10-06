@@ -45,7 +45,7 @@ pub enum Color[T] where T: Format {
 pub enum Infallible {}
 ```
 
-Infallibleという名前への特例ではなく、一般の空enumの規則です。一般のNever型や任意型への暗黙変換を導入するものではありません。空enumの値に対する [空match](../03-expressions/11-control-flow.md#網羅性rust-流) はアーム0個で網羅的となり、正常完了する経路を持ちません。
+Infallibleという名前への特例ではなく、一般の空enumの規則です。一般のNever型や任意型への暗黙変換を導入するものではありません。空enumの値に対する [空match](../03-expressions/11-control-flow.md#網羅性rust-流) はアーム0個で網羅的となり、ソース上発散します。ただし、戻り型が空enumであることだけから通常の関数呼び出しを発散と判断しません。呼び出しの発散はdiverge契約で明示します。
 
 ## フィールドの統一原則
 
