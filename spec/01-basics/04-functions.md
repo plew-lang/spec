@@ -12,7 +12,7 @@ pub fn functionName[T, U](
 }
 ```
 
-引数のモード（`borrow`／`inout`／`move`・コピー可能は既定で by-value）、`async fn`／`spawn fn`／`diverge fn`、型引数の能力マーカー（`allowUnique`／`sendable`）は [値・変数・所有権](03-values.md)・[非同期処理とメモリ管理](../04-execution/14-concurrency.md)・[ジェネリクス](../02-type-system/06-generics.md) を参照。
+引数のモード（`borrow`／`inout`／`move`・コピー可能は既定で by-value）、`async fn`／`spawn fn`／`diverge fn`、型引数の能力マーカー（`allowunique`／`sendable`）は [値・変数・所有権](03-values.md)・[非同期処理とメモリ管理](../04-execution/14-concurrency.md)・[ジェネリクス](../02-type-system/06-generics.md) を参照。
 
 名前付きの `fn` 宣言は**呼び出せる宣言**であって、第一級の関数値ではありません。裸の関数名を値として読めず、関数値が必要なら[無名関数（クロージャ）](#無名関数クロージャ)で明示的に包みます。
 
@@ -322,8 +322,8 @@ mut val count = 0
 val increment = sendable fn() { count += 1 }
 // エラー：sendable fn は mut val `count` を参照キャプチャできない
 
-val state = <Ref value=0 />
-val read = sendable fn() -> I64 { return state->value }
+val state = <Ref value=0I64 />
+val read = sendable fn() -> I64 { return state.* }
 // エラー：sendable fn は nonsendable な `state` をキャプチャできない
 ```
 
@@ -393,6 +393,6 @@ fn f() {
 
 - `val`（不変束縛）のキャプチャは読み取り専用。書き換え可能なのは `mut val` のキャプチャだけです。
 - **単一スレッドだからデータ競合は起きない**：このイベントループモデルでは共有された可変変数へのスレッド間データ競合は起きず、論理的なインタリーブ（再入）だけです（JS と同じ）。ただし [`inout` の memory exclusivity](03-values.md#呼び出し中の同時アクセス防止) は別規則です。`inout` 中に同じ storage を closure capture 経由で読む／書く形は、単一スレッドでも排他違反として拒否または runtime panic になります。
-- **`sendable fn` と `spawn` だけが例外**：スレッド境界を越える暗黙コピーのキャプチャは、v1 では**コピー可能かつ sendable な不変の `val` 束縛**に限られます。`sendable fn` は上記のとおり宣言地点で検査し、`mut val` を参照キャプチャした通常の `fn` は nonsendable です。ベア `spawn { }` はそれ自体が明示的なスレッド境界ですが、`mut val` の直接キャプチャは読み取りだけでも拒否します。可変値のスナップショットが必要なら、外側で `val snapshot = mutableValue` と明示的にコピーします（`unique`/`MutableRef`/`borrow`/`inout` の直接キャプチャは不可。`Ref[T]` は `T: sendable` なら不変束縛からのキャプチャが可）→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)。
+- **`sendable fn` と `spawn` だけが例外**：スレッド境界を越える暗黙コピーのキャプチャは、v1 では**コピー可能かつ sendable な不変の `val` 束縛**に限られます。`sendable fn` は上記のとおり宣言地点で検査し、`mut val` を参照キャプチャした通常の `fn` は nonsendable です。ベア `spawn { }` はそれ自体が明示的なスレッド境界ですが、`mut val` の直接キャプチャは読み取りだけでも拒否します。可変値のスナップショットが必要なら、外側で `val snapshot = mutableValue` と明示的にコピーします（`unique`/`Ref`/`MutableRef`/`borrow`/`inout` の直接キャプチャは不可。`FrozenRef[T]` / `MutexRef[T]` は、その型がsendableなら不変束縛からキャプチャできる）→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)。
 - **`unique` 値はキャプチャできない**（閉包へ move する構文は当面なし）。
-- 共有参照を使う動機はクロージャ環境の状態ではなく、[`unique`](03-values.md#uniqueコピー不可型) 値を複数箇所で共有して取り回したいときや、意図した**循環参照**を作るときなど、独立した保有者の間でヒープ上の同一性を共有したい場合です（→ [Ref / MutableRef / WeakRef](03-values.md#ref--mutableref--weakref共有参照)）。閉包が保持する共有参照で循環ができ得る構造は [`WeakRef` / `WeakMutableRef`](03-values.md#ref--mutableref--weakref共有参照) で断ち切ります。
+- 共有参照を使う動機はクロージャ環境の状態ではなく、[`unique`](03-values.md#uniqueコピー不可型) 値を複数箇所で共有して取り回したいときや、意図した**循環参照**を作るときなど、独立した保有者の間でヒープ上の同一性を共有したい場合です（→ [Ref / MutableRef / WeakRef](03-values.md#ref--mutableref--weakref共有参照)）。閉包が保持する共有参照で循環ができ得る構造は [`WeakRef` / `WeakRef[MutableRef[T]]`](03-values.md#ref--mutableref--weakref共有参照) で断ち切ります。

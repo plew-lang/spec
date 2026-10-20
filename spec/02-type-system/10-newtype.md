@@ -55,6 +55,8 @@ sendability も同じ原則で underlying からそのまま自動継承しま�
 ```plew
 unique struct File {
     val fd: I32
+}
+impl File {
     deinit { sysClose(fd: self.fd) }
 }
 

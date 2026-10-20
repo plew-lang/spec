@@ -12,18 +12,88 @@ fn process[T](container: Container[T]) where T: Format {
 }
 ```
 
-**型パラメータの `[...]` には名前と能力マーカーを並べます**（`[T]`・`[T, U]`・`[sendable T]`・`[allowUnique T]`）。**トレイト制約**はインラインに書かず、すべて [`where` 句](#where-句)に集約します（`fn`・`struct`・`enum`・`trait`・`impl` で共通）。役割分担は「**`[...]`＝名前＋能力マーカー（下記）／`where`＝トレイト制約**」です。
+**型パラメータの `[...]` には名前と能力マーカーを並べます**（`[T]`・`[T, U]`・`[sendable T]`・`[allowunique T]`）。**トレイト制約**はインラインに書かず、すべて [`where` 句](#where-句)に集約します（`fn`・`struct`・`enum`・`trait`・`impl` で共通）。役割分担は「**`[...]`＝名前＋能力マーカー（下記）／`where`＝トレイト制約**」です。
 
 > ジェネリック境界 `where T: P`（同種・静的・全要求が使える）と、トレイトを値の型にする[存在型](08-traits.md#トレイトを値の型として使う存在型-any) `any P`（異種混在・動的・呼べるメンバに制限）は別物です。「1 種類でよい」ならジェネリック、「異種を混ぜたい」なら `any P` を使います。
 
-## 型引数の能力マーカー（allowUnique / sendable）
+## 型引数の能力マーカー（unique / allowunique / sendable）
 
-型引数が**どんな型を取れるか**は `[...]` の能力マーカーで調整します（トレイト制約＝`where` とは別軸）。既定 `[T]` は **common case**＝**`unique` でない（コピー可能）かつ nonsendable 許容**で、無注釈で済みます。逸脱するときだけマークします：
+型引数のコピー能力と送信可能性は別の軸です。`[...]`で宣言し、trait制約は`where`に書きます。
 
-- **`[allowUnique T]`**：`unique` 型も admit する（widen）。`T` をコピーできなくなるので本体は借用／move で扱う。**v1 では未実装の将来機能** ── コア型（`Optional`/`Array`/`Promise`/`JoinHandle` 等）も含め `allowUnique` を入れずコピー可能な型に限定し、`unique` を generic に入れるのは常に共有参照包み（読み取り共有なら [`Ref`](../01-basics/03-values.md#ref--mutableref--weakref共有参照)、可変共有なら `MutableRef`。`Optional[Ref[P]]` / `Optional[MutableRef[P]]`）。
-- **`[sendable T]`**：`T` を sendable 型に限定する（narrow）＝`spawn` する generic やスレッド間チャネルへ送る generic で、移送可能性を明示的に要求する（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md)）。存在型では [`any sendable P`](08-traits.md#存在型の-sendability) は満たすが、保証を消去した無印 `any P` は満たしません。`spawn` を使わない大半のコードでは不要。
+| 宣言 | 許す型 | 本体でのコピー |
+|---|---|---|
+| `[T]` | コピー可能型のみ | 可能 |
+| `[unique T]` | unique型のみ | 不可 |
+| `[allowunique T]` | コピー可能型とunique型 | 仮定できない |
 
-非対称（`allowUnique`＝admit／`sendable`＝restrict）は「**既定＝common case・逸脱だけ注釈**」の帰結です（`unique` は generics で稀なので既定除外、nonsendable は日常的な単一スレッドコードで許容）。**条件付き unique**：`allowUnique` なコンテナが `T` を値で所有すると、`T` が `unique` のときコンテナ自身も `unique` になります（**自動導出・`reunique` 等の宣言は不要**。`unique` 性は型引数から見えるので silent でない）。**条件付き sendability**：型引数をフィールド/payloadとして所有する generic 型は、実際の型引数が sendable なら sendable、nonsendable なら自動的に nonsendable になります。表現に現れない phantom 型引数はこの導出に影響しません。
+送信可能性を要求する場合は`[sendable T]`・`[unique sendable T]`・`[allowunique sendable T]`と書きます。順序はコピー能力、sendable、名前です。無指定はnonsendableも許します。`sendable`はuniqueを受け入れる指定ではなく、`allowunique`も送信可能性を保証しません。能力はfn・型・trait・implの型引数で共通です。
+
+traitのSelfと関連型にも独立したコピー能力を指定できます。適用範囲、継承、関連型束縛、存在型は[traitの能力](08-traits.md)に従います。制約によって型引数の宣言範囲が片側へ暗黙に縮む場合は、宣言側を`T`または`unique T`へ狭めるよう診断します。共通範囲が空でもコンパイルエラーです。`sendable`という別軸の明示的な絞り込みは、このコピー能力の縮小と区別します。
+
+### 所有モードとコピー可能な具体化
+
+具体的なコピー可能型や通常の`[T]`に対して、意味のない`borrow`・`move`を引数宣言・明示操作・selfモードへ書くことはエラーです。可変アクセスの`inout`はコピー可能型にも意味があります。
+
+一方、`unique`になり得る`allowunique`本体では、共通の所有規則を記述するため`borrow`・`move`を許します。コピー可能な型へ具体化した場合、検査済みの借用／消費契約を通常の値渡しへ適応します。その具体化を理由に宣言本体を再診断しません。uniqueな具体化では元のborrow／moveを維持します。呼び出し側で既にコピー可能と分かっている値に明示moveを書くことは、この適応とは別であり拒否します。
+
+```plew
+fn inspect[allowunique T](value: borrow T) { /* 共通能力の範囲で検査 */ }
+fn consume[allowunique T](value: move T) { /* 同上 */ }
+```
+
+本体はコピーを仮定せず、通常の終了時破棄、明示move、借用／inoutの区間、アクセス衝突を検査します。コピー可能な型で偶然成立する操作をuniqueな型へ持ち込みません。型引数・self・関数型内の所有モードにも同じ適応を行います。
+
+所有local・消費引数は、合法なmoveで所有権を渡した後、未所有のままスコープ／関数を終了できます。一方、呼び出し元へ返すinoutの書き戻し先と、生存する共有セルは初期化済みの値を維持しなければなりません。move後に空のまま返すことや共有先からのmove-outを、所有localと同じ扱いにはしません。置換には[replace](../01-basics/03-values.md#汎用dropとreplace)を使います。
+
+trait要求と選択する実装の所有モードは、上記のコピー可能型への適応後に一致しなければなりません。borrowをmoveで代用するなど、モード差を任意のadapterで補うことはしません。引数・selfの所有モードは関数型の同一性にも含め、異なるモード間の暗黙変換は認めません。
+
+### autounique
+
+型引数がuniqueになり得る名目型は、次の三つを区別します。
+
+| 宣言 | 型自身のコピー能力 |
+|---|---|
+| `struct` / `enum` | 常にコピー可能。uniqueを値で所有できない |
+| `unique struct` / `unique enum` | 常にunique |
+| `autounique struct` / `autounique enum` | 所有するフィールド・payloadの能力に従う |
+
+```plew
+autounique enum Optional[allowunique T] {
+    Some(value: T)
+    None
+}
+```
+
+`autounique`は明示宣言です。すべてのvariant・所有フィールドを対象とし、一つでもuniqueを所有すれば外側もuniqueになります。現在のvariant、配列の長さ、実行時の排他的な保持状態などで型のコピー可否を変えません。`Ref[T]`などコピー可能なハンドルはTがuniqueでもコピー可能であり、phantom型引数もunique性を伝播させません。Promiseは物理的なRC表現とは別に結果Tを所有する契約を持ち、[autouniqueと消費await](../04-execution/14-concurrency.md)に従います。
+
+宣言が許す型引数の全範囲で常にコピー可能、または常にuniqueとなる型への`autounique`指定は宣言エラーです。それぞれ通常の型宣言、または`unique`宣言を要求します。判定は宣言条件と所有構造に基づき、現在の利用例・生成済みの具体化の列挙によって変えません。適切なautounique宣言をuniqueな型引数で具体化することは合法です。
+
+```plew
+autounique struct Shared[allowunique T] {
+    val value: Ref[T]
+} // Error: 常にコピー可能
+
+autounique struct OnlyUnique[unique T] {
+    val value: T
+} // Error: 常にunique
+```
+
+通常の型を主語とするimplでは、`impl[allowunique T] unique Box[T]`のようなSelf能力修飾は書けません。Selfの能力は型宣言・所有構造とimplの型引数条件から導きます。traitを主語とする提供implの能力修飾は[trait](08-traits.md)で定めます。条件付きdeinitは[deinit](../01-basics/03-values.md#deinit)に従い、deinitの有無から型のunique性を導きません。
+
+### 能力条件付き候補と重複判定
+
+診断では、具体的な重複を証明した場合と、限定した判定範囲では排他性を証明できない場合を区別します。どちらも拒否しますが、未証明を重複の証明として報告しません。
+
+コピー可能型用・unique型用に、同じ名前の関数やimpl内のメソッド・factoryを排他的に定義できます。同じ呼び出しに複数の候補が適用される定義を、後から優先順位で選ぶことはしません。Selfと関連型を含む能力条件、型の等式、型宣言から保存したautounique導出条件の単純な組合せで、重複がないと証明できる場合だけ受理します。証明不能なら拒否し、任意のtrait制約を解く一般の論理solverを要求しません。
+
+```plew
+fn handle[T](value: T) {}
+fn handle[unique T](value: move T) {}
+```
+
+allowuniqueなgenericから、このような排他的候補群を呼べます。ただし宣言の全範囲を覆い、各具体化で一意に決まり、ラベル・引数／結果型・所有モード・既定値による呼び出し形などが適応後の共通契約として成立することが必要です。一方の候補しか存在しない場合や、具体化して初めて任意のoverload探索をやり直さなければ決まらない場合は拒否します。
+
+コンパイラはgeneric検査時に共通契約と候補・選択条件・適合根拠を保存し、具体化時はその条件を適用します。後段で名前・型名を再検索して別の候補を選びません。一つのtrait要求を`via`でこの候補群へ結び付けることも、[準拠の規則](08-traits.md#トレイト準拠と-via)に従って認めます。一つの型・trait instanceに対する準拠宣言そのものを、コピー能力だけで複数に分割する機能は提供しません。
 
 ## impl の型パラメータ
 

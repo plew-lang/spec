@@ -138,7 +138,7 @@ val result = match expression {
 - **match のアクセスモード**：コピー可能な storage place は裸の `match x` と書けます。`unique` な storage place は裸の `match x` では消費せず、v1 ではコンパイルエラーです。所有権を渡して分解したい場合は `match move x` と書きます。名前の無い `unique` 値（関数結果・構築結果など）は評価結果として所有権を渡すため裸で書けます。enum では `match move x` と同じ consuming match となります。struct の copyable field 読み取りでは元の値全体を保持し、match 文なら文終端、値位置 match なら式終端で破棄します。struct の field partial move は許可しません。
 - **consuming match**：明示 `move` または名前の無いunique値から所有権を受け取るenum matchは、subject全体をconsumeします。`match move x` は元の `x` を消費済みにし、`match makeEnum()` は関数結果を一度評価してその所有権を受け取ります。enum の arm 判定は subject を破壊せずに行い、最終 arm が決まった後で active payload を pattern に従って束縛または破棄します。したがって refutable pattern の試行途中で subject を部分破壊して次 arm を試せなくなることはありません。match 後、移譲元の所有者に破棄責任は残りません。明示moveした元のplaceはmovedであり使えません。
 - **`match borrow` / `match inout` は v1 では持ちません**。有用にするには arm scope を持つ借用束縛・inout 束縛が必要ですが、これは借用変数とライフタイム管理の導入を伴うため将来機能とします。
-- **aggregate partial move は v1 では持ちません**。`move p` のように値全体を移すことはできますが、`move p.field` やパターンで一部のフィールドだけを move out し、残りの aggregate を生かす形は reject します。`match move` の enum payload 束縛は例外ではなく、subject 全体を consume した後に active payload をそのarm内の束縛へ移すだけです。`deinit` 本体は全フィールドが有効な値を前提に走るため、`unique struct` の field partial move とは相性が悪く、deinit の無い aggregate でも move path / drop flag / partial-initialization state を v1 に持ち込まないため同じく reject します。将来必要になった場合は、`swap` / `replace` / `Optional.take()` のような明示 API で container 全体の有効性を保ったまま値を取り出す形で追加します。
+- **aggregate partial move は v1 では持ちません**。`move p` のように値全体を移すことはできますが、`move p.field` やパターンで一部のフィールドだけを move out し、残りの aggregate を生かす形は reject します。`match move` の enum payload 束縛は例外ではなく、subject 全体を consume した後に active payload をそのarm内の束縛へ移すだけです。`deinit` 本体は全フィールドが有効な値を前提に走るため、`unique struct` の field partial move とは相性が悪く、deinit の無い aggregate でも move path / drop flag / partial-initialization state を v1 に持ち込まないため同じく reject します。container全体の有効性を保って旧値を取り出す場合は、採用済みの[replace](../01-basics/03-values.md#汎用dropとreplace)を使います。`swap` / `Optional.take()`等の追加APIは独立した将来検討です。
 - **破棄 `_`** — 値を受け取らずに捨てるワイルドカードです。束縛を作らないので `val` は付けません（`Optional.Some(value: _)`、`(val x, _)` など、パターンが書ける位置ならどこでも）。`_` は**書き込み専用のシンク**で、値式としては読めません（`val x = _` のような取り出しは不可）。
 - **`unique` payload の `_`**：consuming match で active payload の `unique` component を `_` で受けた場合、その component は pattern commit 時に破棄されます。複数の component は payload 宣言順に処理し、`val` で束縛した component は通常のローカル束縛として後で破棄されます。
 - **全フィールド明示** — 構造体・レコード・enum バリアントを `{ … }`／`( … )` で開くパターンは、その型の**全フィールドを明示**します（`val`/bare で束縛するか `_` で破棄）。未記載フィールドの暗黙無視はせず、残り全部を捨てる `..` も持ちません（Rust の「全フィールド or `..`」から `..` の逃げ道を外した形）。**フィールドを増やすと既存パターンがコンパイルエラーになり**、新フィールドの扱いを必ず決めさせます（静かな取りこぼしを防ぐ）。値全体をそのまま受けたいだけなら、開かずに `val x`（束縛）か `_`（破棄）を書きます。
@@ -251,14 +251,14 @@ impl Iterator as Iterable {
 ```
 
 - **`next` は `inout fn`**（カーソルを書き換える＝破壊操作の命令形メソッド）、**`iterator()` は名詞アクセサのメソッド**、要素を産む `Item`/`Iter` は[関連型](../02-type-system/08-traits.md)。`type Iter: Iterator[Item = Item]` は**境界の中で関連型を束縛**する記法（`any Iterator[Item=I32]` と同形で、存在型に限らず境界一般で使える）。
-- v1 はイテレータ＝コピー可能な値（unique イテレータは `allowUnique` 待ちで additive）。公開提供メソッド（`map`/`filter`/`enumerate`/`zip`/`count` 等）は[`Iterator` の `pub impl Iterator` に置く](../02-type-system/08-traits.md)（準拠 `impl T as Iterator` で自動的にベアに載り、境界 `where T: Iterator` 越しにも使える・正確な署名は core-library）。
+- 標準Iteratorは宣言されたコピー可能なSelf／Itemの範囲を使い、allowuniqueの導入だけでunique iteratorへ暗黙に広げません。公開提供メソッド（`map`/`filter`/`enumerate`/`zip`/`count` 等）は[`Iterator` の `pub impl Iterator` に置く](../02-type-system/08-traits.md)（準拠 `impl T as Iterator` で自動的にベアに載り、境界 `where T: Iterator` 越しにも使える・正確な署名は core-library）。
 - **レンジの反復**は要素が `Step` のときだけ `Iterable` になる（条件付き準拠 `where T: Step`）→ [レンジ](../01-basics/02-basic-types.md#レンジhalfopenrange--closedrange)。
 
 ## ガード文
 
 条件が満たされない場合に早期リターンやブロック脱出を行います。条件は他の制御構文と同じ[条件チェーン](#条件チェーン束縛つき条件)（`&&` で Bool 節と反証可能束縛 `PATTERN = expr` を連結）で、束縛した変数は guard を抜けた後で使えます。
 
-v1 の guard 条件チェーンは `unique` storage place を消費する構文を持ちません。`Optional[File]` のような by-value `unique` generic も v1 では書けないため、通常の unwrap は `Optional[Ref[File]]` などコピー可能値で行います。将来 `allowUnique` と借用束縛を導入する場合に、`guard move ...` などの consuming guard 構文を改めて設計します。
+guard条件チェーンにはunique storage placeを消費する構文を設けません。Optional[File]等のunique結果を所有する場合はenumの消費matchを使い、既存のguard束縛から部分move・借用返却を導入しません。コピー可能なOptional[Ref[File]]等の通常の束縛は使えます。
 
 ```plew
 // 基本的な条件チェック

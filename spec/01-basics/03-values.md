@@ -2,11 +2,11 @@
 
 ## 値意味論（value semantics）
 
-Plew の値の受け渡し ── 代入・引数渡し・構造体への埋め込み ── は**論理的なコピー**です。`val b = a` の後、`b` と `a` は独立で、片方を変更しても他方に影響しません。ユーザーが**第一級の値として明示的に構築・共有できる同一性**は [`Ref` / `MutableRef`](#ref--mutableref--weakref共有参照) です。`Ref` は共有読み取り identity、`MutableRef` は共有可変 identity で、可変な方だけが中身を書き換えられます。通常のクロージャは外側の `mut val` を参照キャプチャしてクロージャ環境の可変状態を共有できますが、これはレキシカルな閉包状態であり、`MutableRef` のように独立した共有可変オブジェクトを構築する機構ではありません（→ [関数 § 環境のキャプチャ](04-functions.md#環境のキャプチャ)）。
+Plew の値の受け渡し ── 代入・引数渡し・構造体への埋め込み ── は**論理的なコピー**です。`val b = a` の後、`b` と `a` は独立で、片方を変更しても他方に影響しません。共同所有するidentityは[標準参照型](#ref--mutableref--weakref共有参照)や通信端点などのハンドルで明示します。`Ref` は共有読み取り identity、`MutableRef` は共有可変 identity で、可変な方だけが中身を書き換えられます。通常のクロージャは外側の `mut val` を参照キャプチャしてクロージャ環境の可変状態を共有できますが、これはレキシカルな閉包状態であり、`MutableRef` のように独立した共有可変オブジェクトを構築する機構ではありません（→ [関数 § 環境のキャプチャ](04-functions.md#環境のキャプチャ)）。
 
 > **CoW（copy-on-write）**：論理コピーですが、コンパイラ／ランタイムは実コピーを**遅延**します。共有中は同じ内部バッファを指し、いずれかを**変更した瞬間**にだけ複製します。だから読み取り共有は無料で、`Array`／`String`／`Dictionary` のような大きい値も安価に渡せます（「全代入が即コピー＝遅い」は誤解）。観測意味論は常に「独立」で、CoW は観測できない最適化です。
 
-ランタイムは **ARC（自動参照カウント）** でメモリを管理します。通常実行中に所有者を失った値は決定的に破棄されるので [`deinit`](#deinit) による資源解放が使えます。通常の単一スレッド値は軽量な非 atomic カウントを使い、`spawn`・チャネルを介して複数スレッドに共有され得る値だけは、whole-program 解析により allocation 時点から atomic カウントを使います。例外として、不変トップレベル/`assoc val` のストレージと、それが不変値として固定的に所有する backing はプロセス寿命の immortal allocation なので寿命管理の retain/release 自体が不要です（`MutableRef` の中へ後から格納される値など、可変な内部状態の allocation は含みません）。トップレベル/`assoc val` の所有根は、プロセス終了やホスト runtime teardown 時に user `deinit` を保証しません（→ [モジュールとトップレベル](../04-execution/15-modules.md#トップレベル初期化と実行順序)）。これらの違いはコンパイラ内部の実装方式で、型名や構文には現れません（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md#参照カウント方式の静的選択)）。循環参照だけは参照カウントで回収できないため [`WeakRef` / `WeakMutableRef`](#ref--mutableref--weakref共有参照) で断ち切ります。
+ランタイムは **ARC（自動参照カウント）** でメモリを管理します。通常実行中に所有者を失った値は決定的に破棄されるので [`deinit`](#deinit) による資源解放が使えます。通常allocationの方式はAOT/JITの[RC方針](../04-execution/14-concurrency.md#参照カウント方式の静的選択)に従い、AOTの共有境界がない場合は非atomic、共有可能性がある場合は解析により生成時からatomicを使います。JITの通常管理allocationは原則atomicです。例外として、不変トップレベル/`assoc val` のストレージと、それが不変値として固定的に所有する backing はプロセス寿命の immortal allocation なので寿命管理の retain/release 自体が不要です（`MutableRef` の中へ後から格納される値など、可変な内部状態の allocation は含みません）。トップレベル/`assoc val` の所有根は、プロセス終了やホスト runtime teardown 時に user `deinit` を保証しません（→ [モジュールとトップレベル](../04-execution/15-modules.md#トップレベル初期化と実行順序)）。これらの違いはコンパイラ内部の実装方式で、型名や構文には現れません（→ [非同期処理とメモリ管理](../04-execution/14-concurrency.md#参照カウント方式の静的選択)）。循環参照だけは参照カウントで回収できないため [`WeakRef[R]`](#ref--mutableref--weakref共有参照) で断ち切ります。
 
 ## 再帰する値型（finite・間接化は隠れたコスト）
 
@@ -28,7 +28,8 @@ struct Node {
 - **再帰には終端（base case）が要ります**。終端は enum が与えます（`Nil`・`Optional.None` のような空バリアント）。`struct A { val a: A }` のように enum を経由しない構造体だけの循環は、終端が無く**値を構築できません**（有限型ですが住人がいません）。
 - `Array[T]` を経由する再帰（`struct Tree { val kids: Array[Tree] }`）は、`Array` がもともと要素をヒープ（CoW バッファ）に持つので**そのまま有限**です（追加の間接化は不要）。
 
-> 実装上の現状の限界：再帰フィールドのヒープセルは当面 **ARC 解放を未配線（リーク）**です。観測挙動（値意味論・出力）は正しく、解放は隠れたコストの後付け（additive）です。詳細は [claude/provisional.md](../../claude/provisional.md)。
+自動的に挟む間接セルにも通常の所有・破棄規則を適用します。再帰形であることを、通常の終了時破棄を省く理由にはしません。
+
 
 ## 変数宣言（val / mut val）
 
@@ -55,7 +56,7 @@ mut val y: String = "init"   // 可変束縛（再代入・可変メソッド可
 - **コピー可能型に `borrow` / `move` を書くのはコンパイルエラー**です。`borrow` は観測挙動が by-value と完全に同一（読むだけ・元は無傷・コピーは CoW で実質ゼロコスト、しかもコンパイラがコピー省略を自動で行う）で**何も意味を足さない冗長な指定**であり、`move` はコピーで済むのに「以後使えない」制約だけを課す（`f(x: move a)` 後に `a` が使えなくなる）footgun だからです。コピー可能型で意味を持つモードは **`inout` だけ**。これらが要るのは `unique` 型（コピー不可）のときです。
 - **`inout` はコピー可能型でも `unique` 型でも書けます**：書き戻し（呼び出し側の値が後で変わる）という観測可能な意味を持ち、コピー可能性とは独立だからです。
 - **対称性**：コピー可能型は「コピーできるので `borrow`/`move` は不要＝エラー」、`unique` 型は「コピーできないので by-value（モード無し）が不可＝モード必須」。`inout` だけが両方にまたがります。これで各変数の運命が呼び出し位置で一意に読めます。
-- 関連：v1 のジェネリクスはコピー可能型限定なので、generic `[T]` の引数は by-value（と `inout`）で書き、`borrow`/`move` は書きません（将来 `allowUnique` を入れたとき初めて「unique かもしれない `T` には `borrow`/`move` 可」になります）。メソッドの self も同様で、コピー可能型は `fn`（self 読み・既定）／`inout fn` のみ、`move fn`（self 消費）はエラーです。
+- genericの所有モードは宣言能力に従います。通常の[T]は値渡しとinout、unique/allowuniqueは[borrow／moveと具体化時の適応](../02-type-system/06-generics.md#所有モードとコピー可能な具体化)も使えます。
 - **`inout` は旧 `&mut` の CoW 版**（Swift の `inout` と同じ位置づけ）。「変更する」行為ではなく「変更可能に借りる関係」を表すので、`modify` のような行為語ではなくこの語を使います。
 - 呼び出しの読み分け：`f(x: a)`＝x は無傷／`f(x: inout a)`＝x はこの後変わり得る／`f(x: move a)`＝x は以後使えない。
 - **`inout` の排他は Swift の memory exclusivity と同じ意味論**です。`inout` 引数／`inout fn` の self は、呼び出しの間その place への長期 write access を持ちます。この access は、同じ呼び出しの by-value 引数・デフォルト引数・レシーバ/添字の部分式など **by-value の引数式をすべて評価した後**に始まり、呼び出しと必要な書き戻しが終わるまで続きます。したがって `f(x: inout a, y: a)` の `y` は呼び出し前に作られた snapshot であり、`x` の `inout` と衝突しません。
@@ -70,6 +71,9 @@ fn balance() -> I32 { return self.balance }                            // self �
 ```plew
 unique struct File {
     val fd: I32
+}
+
+impl File {
     deinit { sysClose(fd: self.fd) }
 }
 ```
@@ -88,13 +92,13 @@ unique enum Handle {
 
 - **束縛は move のみ**：`val f2 = move f`（以後 `f` は使えない）。`val f2 = f`（コピー）は**エラー**です。
 - **アクセスはモード明示必須**：コピー可能と違い bare 不可。`borrow`/`inout`/`move` のいずれかを書く。
-- **`unique`（または unique を推移的に含む型）をフィールドに持つ型は `unique` 明示必須**。書かなければコンパイルエラー（自動伝染させず、フィールド追加時に決定を強制する＝[全フィールド明示](11-control-flow.md)と同じ精神）。**enum も同様**：unique（または unique を推移的に含む型）をバリアントのペイロードに持つ enum は `unique enum` 明示必須。
+- **uniqueを所有する型は所有方針を明示します**。常時uniqueなら`unique struct` / `unique enum`、型引数により変わるなら`autounique struct` / `autounique enum`と宣言します。無指定のstruct/enumへ暗黙にunique性を伝染させません。
 - **無名レコードは `unique` を直接にも推移的にも含めない**。外側を `unique` と宣言する場所が無いため、v1 ではそのような無名レコードの形成自体をコンパイルエラーにする。名前付きの `unique struct` を使えばよい。
-- **ジェネリクスには直接渡せない**（型引数はコピー可能な型に限定）。共有・格納したいときは [`Ref` / `MutableRef`](#ref--mutableref--weakref共有参照) で包む（`Optional[MutableRef[File]]` 等 → [ジェネリクス](../02-type-system/06-generics.md)）。
+- **genericの受け入れ範囲は型引数宣言で明示する**。`[unique T]` / `[allowunique T]`はunique型を直接受け入れ、通常の`[T]`は受け入れません（[generic能力](../02-type-system/06-generics.md#型引数の能力マーカーunique--allowunique--sendable)）。条件付きでuniqueを所有する名目型は`autounique`を明示します。無名レコードのunique要素禁止は維持します。
 
 ### deinit
 
-v1 で明示 `deinit` 本体を書けるのは `unique struct` だけです。コピー可能な型は不可 ── コピーのたびに多重実行され二重解放になるためです。`unique enum` はコピー不可・move 専用の値として使えますが、enum 型自身の明示 `deinit` 本体は v1 では書けません（Swift の `~Copyable enum` でも deinitializer は未サポート）。enum を破棄すると active payload は通常通り破棄されます。
+明示deinitは、型の定義モジュールのinherent implで、その全適用範囲のSelfがuniqueなstructにだけ定義できます。autounique structのuniqueな範囲にも条件付きimplを使えます。コピー可能なSelfやstruct本体への定義、enum自身の明示deinitは拒否します。enumのactive payloadは通常どおり破棄します。同じ具体化に複数のdeinitが適用され得る定義は、単純な能力条件で排他性を証明できなければ拒否します。
 
 ```plew
 impl File {
@@ -102,9 +106,9 @@ impl File {
 }
 ```
 
-- 引数・戻り値なし、失敗不可。通常実行中に最後の所有者が所有者として到達不能になるとき（または最後の [`Ref` / `MutableRef`](#ref--mutableref--weakref共有参照) が解放されるとき）に**ちょうど一度**走る。
+- 引数・戻り値なし、失敗不可。通常実行中に最後の所有者が所有者として到達不能になるとき（または最後の[共有セルの強所有者](#ref--mutableref--weakref共有参照)を失うとき）に**ちょうど一度**走る。
 - **決定的契約は通常実行中の正常路のみ**：`deinit` が決定的に走るのはスコープ離脱・`return`・`try`/`Result` 伝播・再代入など、言語が所有者喪失 edge を実行する経路に限る。`panic` や [`Process.exit(code:)`](../04-execution/15-modules.md#実行エントリmain) は non-unwinding termination なので `deinit` を走らせない。プロセス終了やホスト runtime teardown は、トップレベル/`assoc val` 所有根を到達不能にする言語上の edge ではないため、その根とそこから最後まで到達可能な値にも user `deinit` を保証しない。「リークした循環」（`Ref` で意図せず作った循環）も契約外で、将来サイクルコレクタがメモリを回収する際も deinit を走らせず loud に報告する（→ [非同期 § メモリ管理](../04-execution/14-concurrency.md#メモリ管理arc)）。`deinit` の有無で循環の扱いを変えない（「`deinit` を足したらリークし始める」を防ぐ）。
-- 値 struct と enum には書けない（v1 では `unique struct` 宣言が前提）。
+- deinitはstruct本体やtrait準拠・外部拡張には書けず、型の定義モジュールのinherent impl内だけに定義します。そのimplの全適用範囲でSelfがuniqueと証明できることが必要です。autounique structのuniqueな具体化だけに適用するimplも使えます。enum自身の明示deinitは認めません。独自deinitの有無にかかわらず、通常のフィールド破棄は行います。
 - **式が渡す所有権**：関数結果・構築結果と `move value` は、受け手へ所有権を渡す値です。前者は新しい結果、後者は既存placeからの移譲という出どころだけが異なります。束縛・消費引数・消費enum matchへ移譲済みの一時値を元の場所から再び破棄しません。以下の一時値の寿命規則は、その値を所有したままの場合に適用します。
 - **一時値の保持は評価の境界で終わる**：関数・メソッド・factory・クロージャ呼び出しのために評価した一時引数・一時レシーバは、対象の呼び出しが正常に完了した時点（`inout` の書き戻しと借用の終了後、外側の式の評価を再開する前）で保持を終える。明示引数・既定引数、直接・generic・`any Trait`・`via`で同じ規則を使う。`outer(inner(make()))` では `inner` のための一時値は `outer` に入る前に保持を終える。戻り値や保存先へ所有権が移った値、別の所有者が保持する共有値は、その所有者の規則に従って生存する。引数としての保持終了は、実体の無条件な破棄を意味しない。名前付き変数自身の寿命は変更せず、借用だけを残して所有者を失うことは認めない。
 - **呼び出しへ渡されない一時値**は、それを生んだ文（完全式）の終端で保持を終える。条件付きに評価された部分式（短絡 `&&`/`||` の右辺・`?.` の腕）の一時値は、その経路が実行されたときだけ生成され、部分式の評価終端（合流前）までに保持を終える。呼び出し完了など、内側の境界で既に保持を終えた値を再度破棄しない。
@@ -112,86 +116,112 @@ impl File {
 - **名前付き `unique` 値の破棄時点＝accessibility cliff**：名前付き `unique` place は、「その place が名指せて所有している」最後の点まで生き、所有者として到達不能になる最初の CFG edge で破棄される。通常のスコープ離脱はこの一種だが、条件付き `move` の合流や shadowing でも起きる。例：`if c { consume(file: move f) }; print("done")` では、`c == false` の経路で残った `f` も `print` より前の合流 edge で `deinit` され、合流後のコードは `f` を所有していない前提で一様に読む。
 - **drop edge は借用衝突点**：accessibility cliff / scope exit / shadowing など、外側の制御フローが place を破棄する edge は、その place への破棄アクセスである。そこを越えて生きる `borrow` / `inout` があればコンパイルエラーにする。借用は drop 点を後ろへ延ばさない。
 - **同じ評価境界で保持を終える複数の一時値は生成の逆順で破棄**：後に作られた値が先に消える＝後の値が前の値に依存し得る向きと整合。
-- **破棄の順序（決定的）**：まず**型自身の `deinit` 本体**が走り（このとき全フィールドはまだ有効で本体から使える）、続いて**各フィールドの `deinit` が宣言順（上から下）**に走る。フィールドが入れ子の unique 型なら再帰的に同じ規則。`deinit` 本体は全フィールドが有効な値を前提に読むため、v1 では [`unique struct` の field partial move](../03-expressions/11-control-flow.md#パターンマッチ) を reject する。「上から下」で一貫させる ── Plew はフィールド既定値が[他フィールドを参照できない](04-functions.md#デフォルト引数)ため**フィールド間の構築依存が存在せず**、C++ の「構築の逆順で破棄」にする動機が無いので、最も単純な宣言順を採る。外部的な解放順序の制約が要る稀なケースは構造（ネスト）で表現する。
+- **破棄の順序（決定的）**：まず**型自身の `deinit` 本体**が走り（このとき全フィールドはまだ有効で本体から使える）、続いて**各フィールドの `deinit` が宣言順（上から下）**に走る。フィールドが入れ子の unique 型なら再帰的に同じ規則。`deinit` 本体は全フィールドが有効な値を前提に読むため、v1 では [`unique struct` の field partial move](../03-expressions/11-control-flow.md#パターンマッチング) を reject する。「上から下」で一貫させる ── Plew はフィールド既定値が[他フィールドを参照できない](04-functions.md#デフォルト引数)ため**フィールド間の構築依存が存在せず**、C++ の「構築の逆順で破棄」にする動機が無いので、最も単純な宣言順を採る。外部的な解放順序の制約が要る稀なケースは構造（ネスト）で表現する。
 - **同じ drop edge 上の named locals は宣言の逆順**（C++/Rust/Swift と同じスタック規律）：後の束縛は先行する束縛を参照して構築でき（`val b = f(a)`）、依存される側が後に消えるのが安全な向き。通常のスコープ離脱では、そのスコープ内でまだ所有されている locals がこの順に破棄される。フィールドの「宣言順」と非対称なのは意図的 ── フィールドには構築依存が存在しない（前項）が、locals にはあるため。
 - **`return` では文の一時値が frame の locals より先に破棄される**：一時値は最も内側の寿命（生成の逆順規律の帰結＝最後に生まれたものが最初に消える）。順序は「return 値の計算・move → その文の一時値 → named locals（宣言の逆順）」。
 
 ## sendable / nonsendable（スレッド間の移送可能性）
 
-`sendable` は、値を別スレッドへ安全にコピーまたは move できる性質です。`nonsendable` はその否定で、[`MutableRef` / `WeakMutableRef`](#ref--mutableref--weakref共有参照) のようにスレッド境界を越えられない根本型を宣言します。ユーザー定義型も、フィールドだけからは分からないスレッド束縛を表すために明示できます。
+`sendable`は、値を別workerへコピーまたはmoveし、そのworkerで使用・破棄してもPlew管理メモリの安全性を保てる性質です。`nonsendable`はその否定です。コピー可否とは独立であり、uniqueなsendable値も、コピー可能なnonsendable値もあります。
 
-```plew
-struct Ref[T] { /* 組み込み表現 */ }
-nonsendable struct MutableRef[T] { /* 組み込み表現 */ }
-struct WeakRef[T] { /* 組み込み表現 */ }
-nonsendable struct WeakMutableRef[T] { /* 組み込み表現 */ }
+- 通常のstruct・enum・無名レコードは、保持するすべてのフィールド・全variantのpayloadから構造的に判定します。nonsendableが一つでもあれば外側もnonsendableです。現在のvariant、空の配列、現在の別名数によって変えません。generic型も実際に保持する構成要素から導き、phantom型引数だけでは伝播させません。
+- workerに束縛される資源などは、フィールドが数値だけでも`nonsendable struct` / `nonsendable enum`と宣言できます。型修飾の順序は可視性、所有権（unique / autounique）、sendability、宣言種別です。逆向きの`sendable struct`宣言はありません。
+- 通常のRefとMutableRefはTにかかわらずnonsendableです。FrozenRef[T]とMutexRef[T]はTのsendabilityに従います。WeakRef[R]は昇格先Rのsendabilityに従います。参照先を保持するこれらの標準型では、単なる物理フィールドの形ではなく各型の保持契約を使います。
+- nonsendableをFrozenRefやMutexRefで包んでもsendableにはなりません。公開のsyncable能力や、利用状況からnonsendableを越境させる例外は設けません。
+- [newtype](../02-type-system/10-newtype.md#unique-と-sendability-の継承)はunderlyingの性質を継承します。[存在型](../02-type-system/08-traits.md#存在型の-sendability)と[関数値](04-functions.md#sendable-クロージャ)は明示的に保存したsendable保証を使い、消去後の実体から保証を推測して復活させません。
 
-nonsendable struct UiContext {
-    val rawHandle: U64
-}
+保証にはメソッド、operator、暗黙コピー・フィールド破棄、deinit、外部資源の解放も含めます。deinitがglobalのmut valにアクセスするなど、別workerで安全に使用・破棄できない型は送信できません。thread-affineな外部資源はnonsendableで表します。FFI raw pointer / opaque handleは外部値としてsendableが既定ですが、外部の別名・寿命・同期は[FFI利用者の責任](../04-execution/15-modules.md#ffiの安全性と借用の責任)です。
 
-nonsendable enum UiPhase {
-    Idle
-    Active
-}
-
-pub unique nonsendable struct UiResource {
-    val rawHandle: U64
-}
-```
-
-型宣言の修飾子は集合として並べ替え可能にはせず、**可視性 → 所有権 → sendability → 宣言種別**の順に固定します。したがって `pub unique nonsendable struct` / `unique nonsendable enum` が正規かつ唯一の順序で、`nonsendable unique struct` などは構文エラーです。`unique` と `nonsendable` は独立した性質なので同じ型に併記できます。
-
-`nonsendable` は**構造的に自動伝播**します。`nonsendable` なフィールドを直接または推移的に含む struct、nonsendable な payload を持つ enum は、外側に `nonsendable` と書かなくても nonsendable です。
-
-```plew
-struct Session {
-    val conn: MutableRef[Connection]
-}
-// Session は MutableRef[Connection] を含むため自動的に nonsendable
-```
-
-これは [`unique`](#uniqueコピー不可型) と意図的に非対称です。`unique` はコピー可否と呼び出し規則を日常的に変える肯定的な所有権モードなので、unique フィールドを持つ外側にも `unique` の明示を要求します。一方、nonsendable の伝播は spawn 可能性を狭めるだけで、通常の単一スレッドコードの意味を変えません。日常コードへ不要な宣言を広げないため、外側の明示は要求しません。
-
-通常の struct/enum は、すべてのフィールド/payload 型が sendable なら自動的に sendable です。**無名レコードも各フィールドから同じ規則で構造的に導出**します（ただし v1 では、外側の所有権を明示できないため [`unique` を含む無名レコードを形成できません](#uniqueコピー不可型)）。generic 型では、**実際にフィールド/payloadとして所有する型引数**から構造的に導出します。例えば `Box[I64]` は sendable、`Box[Ref[I64]]` は `I64` が sendable なので sendable、`Box[MutableRef[I64]]` や `Optional[WeakMutableRef[I64]]` は nonsendable です。`Ref[T]` / `WeakRef[T]` は読み取り権限だけを運ぶため、`T` が sendable なら sendable です。`MutableRef[T]` / `WeakMutableRef[T]` は共有可変権限を運ぶため常に nonsendable です。表現に現れない phantom 型引数だけでは外側の sendability は変わりません。[`newtype`](../02-type-system/10-newtype.md#unique-と-sendability-の継承) は underlying の sendability をそのまま自動継承し、明示的な sendability 修飾は書けません。[存在型](../02-type-system/08-traits.md#存在型の-sendability)は無印 `any P` が nonsendable、保証を保持する `any sendable P` が sendable な構成型です。明示的な `nonsendable struct` / `nonsendable enum` は、構成要素がすべて sendable でも型自身の sendability の導出を禁止します。逆向きの `sendable struct` / `sendable enum` 宣言はありません。
-
-FFI の raw pointer / opaque handle（`CPtr[T]` / `CMutPtr[T]` / `COpaque` / `extern(c) { type Name }`）は、外部値を指す word-like な raw value として **sendable が既定**です。これは外部オブジェクトの thread-safety を Plew が保証する意味ではありません。Plew の race-free 保証は Plew 管理メモリに限られるため、外部契約としてスレッドを越えてはいけない値は、束縛作者が `extern(c) { nonsendable type Name }`、`nonsendable repr(c) struct`、または `nonsendable struct` wrapper として明示します（→ [外部コード統合](../04-execution/15-modules.md#外部コード統合externc-ffi)）。
-
-nonsendable 値は実スレッド境界（`spawn`・スレッド間チャネル）を越えられません。単一スレッド（`async` を含む）では sendable 値と全く同じに扱えます。関数値の明示的な sendability は [無名関数（クロージャ）](04-functions.md#sendable-クロージャ)を、境界規則の詳細は [非同期処理とメモリ管理](../04-execution/14-concurrency.md) を参照。
-
-**sendability と参照カウント方式は別軸**です。`sendable` は値の内容を別スレッドから扱ってもデータ競合しないことを表し、atomic な参照カウントは共有された値の寿命管理だけを安全にします。したがって `MutableRef` を atomic カウントで保持しても、その referent の共有可変性は消えず nonsendable のままです。逆に、読み取り専用の `Ref` や深く sendable な CoW 値は、共有され得る allocation の参照カウントだけを atomic にすれば、実データをコピーせずスレッド間で安全に共有できます。
+**sendabilityとRC方式は別軸です。** atomic RCは共有allocationの寿命だけを保護し、共有payloadの無同期な読み書きを安全にはしません。型の送信可否と、[allocation方式の選択](../04-execution/14-concurrency.md#参照カウント方式の静的選択)は別に検査します。
 
 ## Ref / MutableRef / WeakRef（共有参照）
 
-値意味論では通常の値を共有 identity として扱えません。共有 identity が要るときは `Ref[T]` / `MutableRef[T]` を明示して、同一性を持つヒープ上の箱を複数の保有者で共有します。
+通常の値意味論とは別に共同所有するidentityが必要な場合、標準参照型を使います。Ref / MutableRef / FrozenRef / MutexRefは`[allowunique T]`を受け入れ、本体Tがuniqueでもハンドル自身はコピー可能です。MutexGuard[T]は常にuniqueかつnonsendableです。通常Ref系とWeakRef / Weakableは`@Std/Core`、MutexRef / MutexGuardは`@Std/Sync`から明示useします。
+
+| 型 | 参照先への権限 | sendability |
+|---|---|---|
+| Ref[T] | 読み取り。同じセルのMutableRefの変更を観測し得る | 常にnonsendable |
+| MutableRef[T] | 同じセルの読み取り・変更 | 常にnonsendable |
+| FrozenRef[T] | 格納したT自体の直接変更禁止 | Tに従う |
+| MutexRef[T] | 共同所有。参照先へは取得したGuardを通してアクセス | Tに従う |
+| MutexGuard[T] | 取得中のセルへの読み取り・変更と解除責任 | 常にnonsendable |
+
+### 構築と参照変換
+
+新しいセルは`factory(value: …)`で構築します。コピー可能なTでは`factory(value: T)`、uniqueなTでは`factory(value: move T)`という排他的な契約を提供します。通常値は論理コピー、unique値は所有権移送で格納し、未初期化セルやゼロ引数factoryは公開しません。コピー可能な値に明示moveを付ける必要はありません。
 
 ```plew
-val m = <MutableRef value=conn /> // conn を箱へ move（共有可変ハンドル）
-m->state = Connected              // MutableRef 越しの書き込みは全保有者に見える
-val r: Ref[Connection] = m.asRef() // 読み取り専用ビューへ権限を落とす
-val r2 = r                         // ハンドルをコピー＝同じ箱を共有（参照カウント++）
+val state = <MutableRef value=<Counter count=0I64 /> />
+val reader = state.asRef()
+val frozen = <FrozenRef value=move file />
 ```
 
-- `Ref[T]` / `MutableRef[T]` は**祝福プリミティブ**（`Buffer` と同様、純 Plew では書けない。`String` はその安全床の上の純 Plew 値型＝`struct String { buffer: Buffer[U8] }` なので祝福不要）。コピーで共有＋retain し、通常実行中に最後の強参照が解放されれば中身の `deinit` を走らせる。ただしトップレベル/`assoc val` 所有根から最後まで到達可能な cell とその pointee は、プロセス終了や host teardown 時に user `deinit` を保証しない。
-- **`Ref[T]` は読み取り専用の共有 identity**です。`r->field` や `r->method()` で pointee を読めますが、`r->field = v` や `r->inoutMethod()` はできません。`Ref` は deep freeze ではなく**読み取り capability**です。同じ cell に対する `MutableRef` がどこかに残っていれば、その変更は `Ref` からも読めます。Plew はここを厳密な凍結ではなく、API 境界で可変権限を外へ出さないための権限分離として扱います。
-- **`MutableRef[T]` は共有可変 identity**です。`val` な `MutableRef` 越しでも中身は変更できます。`MutableRef` 束縛の `val`/`mut val` は **ハンドル変数の再代入（`m = other`）** を gate するだけで、referent の変更（`m->x = v`・`inout fn` 呼び出し）は gate しません（Swift の `let class` と同じ）。値型の `val`（凍結）との非対称は、値 vs 参照の差を `MutableRef`＋`->` で可視化したものです。
-- **変換は可変から読み取りへ一方向**です。`MutableRef[T].asRef() -> Ref[T]` は可変権限を落とした読み取りビューを返します。逆向きの `Ref[T] -> MutableRef[T]` はありません。`Ref` から可変権限を復活できると API 境界で「読み取り専用にした」意味が崩れるためです。
-- **`.` はハンドル自体への操作、`->` は中身（pointee）への操作**（C と同じ）。共有セルへ触る地点が `->` で構文的に明示され、値の `.` と区別されます。`->` が読み取りか書き込みかは、base が `Ref` か `MutableRef` かで決まります。
-- **`move fn`（消費メソッド）は共有参照越しに呼べない**：共有された referent を消費すると他のハンドルが無効化される（use-after-consume）ため、`Ref` 越しは `fn` のみ、`MutableRef` 越しは `fn`/`inout fn` のみ。共有資源の後始末は **`deinit`（最後の強参照解放時）** に委ねます。明示消費や失敗し得る `close() -> Result` が要るなら、共有せず裸の [`unique`](#uniqueコピー不可型) 値（唯一所有）で `move fn` を呼びます（共有時は「誰が close エラーを受けるか」が原理的に不定なので呼べないのが正しい）。〔additive：唯一保持なら中身を取り出す `tryUnwrap() -> Optional[T]` を後付けし得る。〕
-- **循環**は参照カウントで回収されないので、断ち切りに **`WeakRef[T]` / `WeakMutableRef[T]`**（非所有・指す先が消え得る）を使います。循環が生じ得るのは共有参照グラフだけで、その自動回収（共有参照グラフ限定のサイクルコレクタ）は将来 additive に足せる方針です（検出時は全ビルドで loud 報告＋メモリ回収・ただし循環メンバの `deinit` は走らせない＝下記 [deinit](#deinit) の契約外脱出。→ [非同期処理とメモリ管理 § メモリ管理（ARC）](../04-execution/14-concurrency.md#メモリ管理arc)）。それまでは弱参照＋リーク報告で運用します。`MutableRef.weak() -> WeakMutableRef[T]`、`Ref.weak() -> WeakRef[T]` です。`WeakMutableRef[T].asRef() -> WeakRef[T]` は許しますが、逆向きはありません。
-- **弱参照は直接 deref できません（`w->x` は無い）** ── 指す先が生きている保証が無いからです。生存確認とアクセスは **`upgrade()`** を通します。`WeakRef[T].upgrade() -> Optional[Ref[T]]`、`WeakMutableRef[T].upgrade() -> Optional[MutableRef[T]]` です。弱い読み取り参照から可変権限が復活することはありません。
+MutableRef.asRefとFrozenRef.asRefは、同じセルへの新しいRef[T]を返す非消費メソッドです。本体のコピー・新セル構築は行いません。RefからMutableRef/FrozenRef、MutableRefからFrozenRefへの同一セル変換は提供しません。コピー可能な中身を別セルへ保存したい場合は、`<FrozenRef value=state.* />`と明示します。これは元セルの凍結ではありません。
+
+FrozenRefは深い凍結を要求しません。TがMutableRef等を含んでも格納できますが、そのFrozenRefもnonsendableになります。uniqueな本体はmoveで直接格納でき、共同所有するためだけのコピーは不要です。ハンドルの通常のコピーは同じセルを共有し、factoryの呼び直しとは区別します。
+
+### 参照外しとアクセスの範囲
+
+**後置`.*`が参照先のplaceを作ります。** `ref.*.field` / `ref.*.method()`と書き、`.`による暗黙の参照外し、参照先アクセスの`->`、特殊なpointeeプロパティや共通get/set traitは提供しません。戻り型の`->`とは別の構文です。
 
 ```plew
-val w = r.weak()                         // WeakRef[T]
-match w.upgrade() {                      // Optional[Ref[T]]
-    Optional.Some(value: val live) => live->x // 強参照に格上げ済み＝生存保証・読み取り可
-    Optional.None                  => skip()
+inspect(file: borrow ref.*)
+update(file: inout guard.*)
+guard.* += 1I64
+holder.*.guard.*.count += 1I64
+```
+
+参照式は一度だけ評価します。`.*`は所有値を返すgetterではなく、読み取り・借用・inout・書き戻しを同じplace規則へ接続します。読み取り文脈でコピー可能な値を取得すれば通常の論理コピーです。uniqueな本体のmove-out、参照越しのmove self呼び出し、セルを未初期化にする取り出しは認めません。
+
+Ref/FrozenRefは読み取りのみ、MutableRef/MutexGuardは間接placeの変更も許します。`val`なハンドルからも許可された変更はでき、ハンドル束縛自体の再代入権限とは区別します。これを通常の不変値フィールドの変更許可へ一般化しません。MutexRefそのものとWeakRefは`.*`できません。
+
+placeの形成から最終利用・書き戻しまで、途中の所有根と権限を維持します。Guardに依存するアクセス中は元のGuardのmove/dropを既存のborrow／排他規則で禁止し、セルretainだけで代用しません。共有本体への別名アクセスと再入も通常のアクセス検査に従います。独立した所有コピーが完成すれば元placeへの依存はそこで終わります。
+
+組み込み参照型は標準宣言identityで識別し、同じ名前のユーザー型へ権限を与えません。ユーザー定義の射影、借用placeを返すメソッド、owner依存の参照の保存・返却・捕捉、一般の公開ライフタイムは提供しません。カスタム型は組み込み参照を保持して通常のメソッドへ委譲できますが、独自の`.*`は定義できません。
+
+### MutexRefとGuard
+
+MutexRefのfactoryは有効なTと未取得のロックを同じ安定した共有本体へ格納します。`lock() -> MutexGuard[T]`は現在のworkerのスレッドを取得まで待機させ、`tryLock() -> Optional[MutexGuard[T]]`は取得できなければNoneを返します。poisoningによるResultは導入せず、panicは通常のnon-unwinding終了です。Guardに公開factoryはありません。
+
+Guardは同じセルを強参照するので、元のMutexRefが失われても本体は生存します。Guardの通常破棄で先にunlockし、その後にセルの強参照を解放します。専用unlockや解除済みGuard状態、withLock/withValue APIは提供しません。明示的な解除には下記の汎用dropを使います。
+
+Guardの所有をawait越しに保持することは許しますが、中身へのactiveなborrow/inoutをawait越しに保持する制限は解除しません。Guardは別workerへ送れません。保持中の同じロックは、同じスレッドからでも再取得できません。デッドロック回避は利用者の責任で、完全検知は保証しません。低工数で通常の実行性能へ影響しない範囲のbest-effort診断は補助機能であり、ロック契約の代わりではありません。待ち時間が長いだけでデッドロックと判定して終了させず、常時監視や重い待機グラフ管理を必須にしません。
+
+### WeakRefとWeakable
+
+WeakRef[R]自体は、本体がuniqueでもコピー可能な弱参照ハンドルです。Rは**昇格先の強参照ハンドル型**です。Rは通常のコピー可能な型引数で、参照型限定の追加制約を設けません。WeakRef[I64]等も型としては合法ですが、任意の値を作る公開factoryはありません。私有の構築経路が正しいセルとRの復元情報を保証します。
+
+| 作成元 | weak() | upgrade() |
+|---|---|---|
+| Ref[T] | WeakRef[Ref[T]] | Optional[Ref[T]] |
+| MutableRef[T] | WeakRef[MutableRef[T]] | Optional[MutableRef[T]] |
+| FrozenRef[T] | WeakRef[FrozenRef[T]] | Optional[FrozenRef[T]] |
+| MutexRef[T] | WeakRef[MutexRef[T]] | Optional[MutexRef[T]] |
+
+weak / upgradeは非消費です。WeakRefは対象を生存させず、対象が生存中にだけ同じRの新しい強参照へ昇格します。最後の強所有を失い破棄が始まった対象を復活させず、残るweakの検査用制御情報は維持します。WeakRefから直接参照外しはできません。読み取りweakから可変権限を得る変換、Guardのweak化、参照種別ごとの別Weak型は提供しません。
+
+```plew
+pub trait Weakable {
+    fn weak() -> WeakRef[Self]
 }
 ```
 
-- **再帰的な値型に共有参照は要りません**：自己参照する `struct`/`enum`（木・連結リスト・AST 等）はコンパイラが自動でヒープ間接を挟みレイアウトを有限化します（値意味論のまま sendable）。`Ref` / `MutableRef` を書くのは**共有 identity を持つグラフ**（コピーでノード共有・循環あり）を意図したときだけです。詳細は [構造体と列挙型 § 再帰的な値型](../02-type-system/05-structs-enums.md#再帰的な値型)。
+通常のコピー可能Self用traitとして、四つの強参照型へ提供します。Weakable準拠自体は私有factoryや生のRC操作への権限ではありません。正しいWeakRef[Self]を返せる通常の実装が必要です。genericな`upgrade`は任意のコピー可能Rで検査でき、後段でRが組み込み参照型でないことを理由に拒否しません。
 
-  `w->x` を「直接 `Optional` を返す deref」にしないのは、(1) **生存を固定**するため（一度 `upgrade` すれば強参照が指す先を生かし続ける。`w->x`/`w->y` を個別に可謬にすると間に最後の強参照が落ちて途中で死に得る）、(2) **書き込みが綺麗**（`MutableRef` へ upgrade 済みのときだけ `m->x = v` と書く。死んだ先への静かな no-op を避ける）、(3) **`->` の意味を一定に保つ**（常に「生存保証された強参照の deref」）ため。Rust の `Weak::upgrade()` と同じ。
+共同所有の本体は、最後の所有者を失ったworkerで一度だけ通常破棄します。作成workerへ送り返したり、そのworkerを破棄のために延命したりしません。sendableの保証にはこの破棄経路も含みます。プロセス終了や共有循環の扱いは[deinit](#deinit)と[ARC](../04-execution/14-concurrency.md#メモリ管理arc)の保証範囲に従います。再帰的な値型の有限な木には、共有identityを表すRefを要求しません。
+
+### 汎用dropとreplace
+
+`@Std/Core`は次の通常関数を公開します。
+
+```plew
+fn drop[unique T](value~: move T)
+fn replace[allowunique T](target: inout T, value: move T) -> T
+```
+
+dropは所有引数の通常破棄で呼び出し完了までに解放します。`drop(move guard)`ならロックを解除します。コピー可能型へのdropは意味のないmoveを許す逃げ道にせず、拒否します。
+
+replaceは新値をtargetへ格納し、旧値の所有権を返します。コピー可能なTの新値は通常の値引数へ適応します。評価は既存の引数順で一度だけ行い、新値が完成する前に旧値を取り出しません。交換中の未初期化状態を観測させず、交換途中にユーザーdeinitを呼びません。返された旧値の破棄はその新しい所有者に従います。通常の可変localとMutableRef/Guardの間接placeで同じinoutを使い、Ref/FrozenRefには適用できません。replace自体にロック取得・atomic更新は追加せず、元placeの所有根保護と排他契約を維持します。
 
 ## 再宣言（shadowing）
 
@@ -242,7 +272,7 @@ SomeStruct { field1: val a, field2: val b } = someStruct // 別名
 
 ## 場所（place）越しの変更
 
-代入の左辺・`inout` のレシーバ／引数になれるのは**場所（place）**＝`mut val` 束縛を根に、フィールドアクセスと添字を連ねたパスです（`x`・`x.field`・`arr[i]`・`a.b[i].c` 等）。`val` 束縛・関数の戻り値・一時値は場所ではなく、変更先にできません。
+代入の左辺・`inout` のレシーバ／引数になれるのは、書き込み権限を持つ**場所（place）**です。通常の値では`mut val`束縛を根に、フィールドアクセスと添字を連ねたパスです（`x`・`x.field`・`arr[i]`・`a.b[i].c`等）。`val`束縛・関数の戻り値・一時値である通常の値は変更先にできません。組み込み参照の`.*`は別の、参照先への間接placeです。MutableRef / MutexGuardはハンドルの束縛が`val`でも参照先への書き込み権限を持ち、Ref / FrozenRefは読み取りだけです。間接placeの形成時から、参照先と途中の所有根の寿命・権限を[標準参照の規則](#ref--mutableref--weakref共有参照)で保護します。
 
 ### get-modify-set 脱糖
 
@@ -281,14 +311,14 @@ get-modify-set が**意味モデル**です。コンパイラは、(1) バッフ
   - 同じ struct の**別フィールド**（`s.a` と `s.b`）→ OK（互いに素）。
 - **異なる変数を root とする place 同士 → OK**（値意味論ではエイリアスし得ない・検査なし）。
 
-**共有世界（`->`＝`MutableRef` の deref を跨ぐ place）＝ランタイム検査（panic）＋セル pin。**
+**共有世界（MutableRef / MutexGuardの`.*`を跨ぐplace）＝ランタイム検査（panic）＋セル pin。**
 
 - セルの同一性は実行時にしか分からない（`r1` と `r2` は同じセルを指し得る）ので、**呼び出し直前に place の一致をアドレスで検査**し、重なれば **panic**：
-  - 同一セルの**同一フィールド**（`r1->n` と `r2->n`）→ panic。**別フィールド**（`r1->n` と `r2->m`）→ OK。
-  - **コンテナ粒度**：同一セルのコンテナ値とその要素（`r1->xs` と `r2->xs[k]`）・同一コンテナの要素同士（`r1->xs[i]` と `r2->xs[j]`）は、添字を見ずに panic（Swift の配列プロパティと同粒度）。
-  - 同一変数経由で重なりが静的に確定する形（`r->m()` レシーバと `inout r->m`・`r->xs` と `r->xs[k]`）は**コンパイルエラーに前倒し**します。
+  - 同一セルの**同一フィールド**（`r1.*.n` と `r2.*.n`）→ panic。**別フィールド**（`r1.*.n` と `r2.*.m`）→ OK。
+  - **コンテナ粒度**：同一セルのコンテナ値とその要素（`r1.*.xs` と `r2.*.xs[k]`）・同一コンテナの要素同士（`r1.*.xs[i]` と `r2.*.xs[j]`）は、添字を見ずに panic（Swift の配列プロパティと同粒度）。
+  - 同一変数経由で重なりが静的に確定する形（`r.*.m()` レシーバと `inout r.*.m`・`r.*.xs` と `r.*.xs[k]`）は**コンパイルエラーに前倒し**します。
   - 検査は place を求める際に**評価済みの値だけ**で行い、引数の部分式を再評価しません（副作用を二重に発火させない）。
-- **セル pin**：deref を跨ぐ place を `inout` で貸すとき、コンパイラは**呼び出しの間そのセルを保持（retain）**します。呼び出し中にセルへの最後の参照が消えても（`MutableRef` 変数の付け替え等）セルは呼び出し終了まで生き、**pointee の `deinit`・解放は呼び出しの後**に起きます（Swift が class の base を retain するのと同じ機構）。この保証により **`MutableRef` 変数とその pointee の place は同時に貸せます**——`f(r: inout r1, x: inout r1->n)` は合法で、`x` は**呼び出し時点で `r1` が指していたセル**の `n` に束縛され（place は 1 回評価）、`r` の付け替えと独立に書き込みはそのセルへ届きます。読み取り専用の `Ref` からは `inout` place を作れません。
+- **セル pin**：deref を跨ぐ place を `inout` で貸すとき、コンパイラは**呼び出しの間そのセルを保持（retain）**します。呼び出し中にセルへの最後の参照が消えても（`MutableRef` 変数の付け替え等）セルは呼び出し終了まで生き、**pointee の `deinit`・解放は呼び出しの後**に起きます（Swift が class の base を retain するのと同じ機構）。この保証により **`MutableRef` 変数とその pointee の place は同時に貸せます**——`f(r: inout r1, x: inout r1.*.n)` は合法で、`x` は**呼び出し時点で `r1` が指していたセル**の `n` に束縛され（place は 1 回評価）、`r` の付け替えと独立に書き込みはそのセルへ届きます。読み取り専用の `Ref` からは `inout` place を作れません。
 
 ### 呼び出し中の同時アクセス防止
 

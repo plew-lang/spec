@@ -16,11 +16,11 @@ Plew は、複雑な状態を持つクライアントと、それを支える AP
 ```
 pub, get, type, val, mut, async, spawn, await, loop, break, continue,
 give, return, panic, where, enum, struct, newtype, assoc, extension, impl, via, trait, fn, macro, macrointerface,
-factory, borrow, inout, move, unique, sendable, nonsendable, deinit, guard, while, for, in, if, else,
+factory, borrow, inout, move, unique, allowunique, autounique, sendable, nonsendable, deinit, guard, while, for, in, if, else,
 match, as, self, Self, extern, repr, use, part, only, try, true, false
 ```
 
-`true` / `false` は真偽値リテラルです。`borrow`/`inout`/`move`（アクセスモード）・`unique`（所有権）・`sendable`/`nonsendable`（スレッド移送可能性）・`deinit`・generics の `allowUnique`/`sendable` は [値・変数・所有権](03-values.md) を参照。`mut` は記憶域可変性（`mut val`）専用です。
+`true` / `false` は真偽値リテラルです。`borrow`/`inout`/`move`（アクセスモード）・`unique`（所有権）・`sendable`/`nonsendable`（スレッド移送可能性）・`deinit`・generics の `allowunique`/`sendable` は [値・変数・所有権](03-values.md) を参照。`mut` は記憶域可変性（`mut val`）専用です。
 
 **文脈依存キーワード**：`use` はモジュール取り込み宣言の先頭、`only` はその選択句の位置でのみキーワードとして働きます。それ以外では通常の識別子であり、`fn use(...)`、`fn only(...)`、同名の変数・引数・メンバを宣言できます。
 

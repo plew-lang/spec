@@ -14,7 +14,7 @@ pub struct MyStruct[T] where T: SomeTrait {
 
 `pub` / `pub(get)` / 非公開（修飾なし）のメンバ可視性は本章末の[メンバの可視性](#メンバの可視性)を参照。`pub(get)` は `mut val` フィールドの setter だけを内部に閉じる指定です。非公開メンバは定義モジュール内のコードから見えます。
 
-型宣言の修飾子順序は **`pub` → `unique` → `nonsendable` → `struct` / `enum`** に固定します。例えば `pub unique nonsendable struct UiResource` は合法ですが、同じ意味の修飾子を並べ替えた `nonsendable unique struct` は構文エラーです。修飾子を集合として扱わず、同じ宣言に一つの書き方だけを与えます（意味論は [unique](../01-basics/03-values.md#uniqueコピー不可型) / [sendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
+型宣言の修飾子順序は **`pub` → `unique` または `autounique` → `nonsendable` → `struct` / `enum`** に固定します。例えば `pub unique nonsendable struct UiResource` は合法ですが、同じ意味の修飾子を並べ替えた `nonsendable unique struct` は構文エラーです。修飾子を集合として扱わず、同じ宣言に一つの書き方だけを与えます（意味論は [unique](../01-basics/03-values.md#uniqueコピー不可型) / [sendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
 拡張を型本体で既定化する構文は持ちません。拡張は常に使用箇所の `#Ext` で opt-in します。型の作者が拡張由来の振る舞いを型のベア表面に採用したい場合は、型を所有するモジュールの `pub impl Type` / `pub impl Type as Trait` に明示的な forwarding メソッドや準拠を書きます。トレイト自身の公開提供メソッドは準拠（`impl Type as Trait`）で自動的にベアに載ります（→ [トレイト](08-traits.md)、[拡張](09-extensions.md)）。
 
@@ -33,7 +33,7 @@ pub enum Color[T] where T: Format {
 
 **列挙型ディレクティブ**: 詳細は今後決定予定（[メタプログラミング](../04-execution/16-metaprogramming.md) 参照）
 
-**`unique enum`**：struct と同様、`unique` を前置した enum は[コピー不可・move 専用](../01-basics/03-values.md#uniqueコピー不可型)（Swift の noncopyable enum と同型）。unique（または unique を推移的に含む型）をペイロードに持つ enum は `unique enum` 明示必須（伝染規則は struct のフィールドと同一）。ただし v1 では enum 型自身の明示 `deinit` 本体は持てません。enum の破棄時は active payload が通常通り破棄されます。
+**`unique enum`**：struct と同様、`unique` を前置した enum は[コピー不可・move 専用](../01-basics/03-values.md#uniqueコピー不可型)（Swift の noncopyable enum と同型）。uniqueを所有するenumは、常にuniqueなら`unique enum`、型引数によってコピー可否が変わるなら`autounique enum`と明示します（[能力とautounique](06-generics.md#autounique)。伝播規則はstructの所有フィールドと同一）。ただし v1 では enum 型自身の明示 `deinit` 本体は持てません。enum の破棄時は active payload が通常通り破棄されます。
 
 **`nonsendable enum`**：payload の型に依存しないスレッド束縛を表すときは `nonsendable` を前置できます。全バリアントが payload を持たない、または全 payload が sendable でも、この enum 自身は実スレッド境界を越えません。逆に nonsendable な payload を持つ enum は明示がなくても構造的に nonsendable です。肯定形の `sendable enum` はなく、通常の enum は payload から sendability を自動導出します（→ [sendable / nonsendable](../01-basics/03-values.md#sendable--nonsendableスレッド間の移送可能性)）。
 
@@ -68,14 +68,12 @@ Infallibleという名前への特例ではなく、一般の空enumの規則で
 オプショナル値とエラーは特別な構文ではなく、通常の列挙型として定義されます。
 
 ```plew
-@[All, Eq]
-pub enum Optional[T] {
+pub autounique enum Optional[allowunique T] {
     Some(value: T)
     None
 }
 
-@[All, Eq]
-pub enum Result[T, E] {
+pub autounique enum Result[allowunique T, allowunique E] {
     Ok(value: T)
     Err(error: E)
 }
@@ -93,7 +91,7 @@ match maybeValue {
 
 オプショナルチェーン（`?.`）は `Chain` トレイトの実装によって有効になります。nil 合体演算子（`??`）は持たず、フォールバックは `Optional.unwrapOr(fallback:)` メソッド（eager 値／lazy クロージャのオーバーロード）で書きます（[型変換と演算子](../03-expressions/12-operators.md) 参照）。
 
-v1 の `Optional[T]` は通常の generic enum なので、`T` はコピー可能型に限ります。`Optional[File]` のように by-value の `unique` 型を直接入れることはできません。`Ref[File]` / `MutableRef[File]` で包めば `Optional[Ref[File]]` や `Optional[MutableRef[File]]` は書けますが、これは共有 identity を導入する別の意味であり、「optional な唯一所有資源」ではありません。by-value の `Optional[unique]` は [`allowUnique`](06-generics.md) で generic container の move-only payload を明示的に許す設計を入れた後の将来機能です。v1 で禁じる理由は、通常 generic enum に move-only payload を入れると、copy / drop / match move / partial initialization の規則が型引数の能力に依存し、すべての generic container が所有権 IR を要求するためです。
+Optionalは`autounique enum Optional[allowunique T]`です。Tがコピー可能ならOptionalもコピー可能、TがuniqueならOptionalもuniqueで、Noneの場合もその型分類は変えません。Optional[File]等の所有値はenumの消費matchで取り出せます。共有identityが必要な場合にRef/FrozenRef等を使うこととは別です。
 
 > トレイトもカスタム型の一種ですが、要求・関連型・継承・準拠と `via` の意味論は独立章の[トレイト](08-traits.md)にまとめています。
 
@@ -129,10 +127,10 @@ enum List[T] {
 ```plew
 val l: Optional[TreeNode]             = …   // 値の木。コピーで独立
 val g: Optional[Ref[TreeNode]]        = …   // 共有読み取りグラフ。コピーでノード共有・循環可（→ WeakRef）
-val m: Optional[MutableRef[TreeNode]] = …   // 共有可変グラフ。コピーでノード共有・循環可（→ WeakMutableRef）
+val m: Optional[MutableRef[TreeNode]] = …   // 共有可変グラフ。コピーでノード共有・循環可（→ WeakRef[MutableRef[TreeNode]]）
 ```
 
-`MutableRef` は nonsendable であり、それを含む型にも nonsendable が自動伝播して spawn 境界を越えられません。`Ref[T]` は読み取り専用なので、`T` が sendable なら `Ref[T]` も sendable です（[値・変数・所有権](../01-basics/03-values.md) / [非同期](../04-execution/14-concurrency.md)）。素の再帰値型は共有参照を含まないため、木や AST をそのまま別スレッドへ送れます。
+通常のRef/MutableRefと、それらへ昇格するWeakRefはnonsendableであり、保持する型へその性質が伝播します。worker間で共同所有したい場合はsendableな本体をFrozenRef/MutexRefへ格納します。共有identityのない再帰的な値型は、構成要素がsendableなら通常の値送信ができます。
 
 > 終端ケース（`Optional` の `None` 等）を持たない再帰（`struct Node { val child: Node }`）も**型としては合法**です。レイアウトは有限になりますが、有限の値を構築する手段がないだけです（Rust の `Box` 版と同じ状況）。これを禁じるのはコンパイラに不要なチェックを課すだけなので、特別扱いしません。
 

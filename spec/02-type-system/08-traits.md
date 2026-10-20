@@ -4,6 +4,56 @@
 
 トレイトの宣言は型システムの[カスタム型](05-structs-enums.md)の一種で、`pub trait Shape { … }` のように書きます。本章では定義・関連型・継承・準拠の意味論、トレイトを値の型として使う**存在型**（`any`）、そして標準で提供されるトレイトのカタログをまとめます。
 
+## Self・関連型・提供メソッドのコピー能力
+
+Selfの許容範囲は`trait P`（コピー可能のみ）、`unique trait P`（uniqueのみ）、`allowunique trait P`（両方）で宣言します。関連型も`type Item`、`unique type Item`、`allowunique type Item`の三分類で、Selfとは独立です。uniqueな関連型を生成するコピー可能なSelfも、その逆も表現できます。宣言本体は許容範囲の共通能力だけで検査します。
+
+```plew
+allowunique trait Producer {
+    allowunique type Item
+    fn produce() -> Item
+}
+```
+
+関連型要求が示す能力は型の契約であり、借用したself内のunique値をコピー・moveして返す許可ではありません。実装本体の所有権検査は通常どおり行います。フィールド要求も通常のstorageアクセスであり、uniqueフィールドの読み出しを所有値getterへ変換したり、借用戻り値を導入したりしません。
+
+### 継承と能力範囲
+
+子traitが宣言したSelfの全範囲を、すべての親traitが受け入れられなければなりません。親との交差で暗黙に範囲を狭めず、狭い宣言への修正を要求します。共通範囲が空でもエラーです。
+
+```plew
+allowunique trait A {}
+trait B: A {}                 // OK
+unique trait C: A {}          // OK
+allowunique trait D: B {}     // Error: Bはコピー可能のみ
+unique trait E: B {}          // Error: 共通範囲が空
+allowunique trait F: C {}     // Error: Cはuniqueのみ
+trait G: C {}                 // Error: 共通範囲が空
+```
+
+trait間準拠`impl B as A`もBの全準拠型でAの能力・関連型・要求を満たすことが必要です。現在の具体型の列挙や、対象の一部への暗黙限定では受理しません。条件付きtrait間準拠を別機能として導入しません。
+
+継承した関連型は、同じ名前・同じ能力でも再宣言できません。既存の関連型への条件は、次の明示束縛で表します。
+
+### 関連型束縛と提供範囲
+
+```plew
+fn processUnique[T, unique Item](source: T)
+    where T: Producer[Item = Item] {}
+
+impl[unique Item] allowunique Producer[Item = Item] {
+    fn uniqueItemOnly() {}
+}
+```
+
+左側Itemは選択済みの完全なtrait instanceの射影、右側Itemは導入した型引数です。呼び出し側が別の型を独立に選べるのではなく、その等式と能力条件を同じ適用検査で確認します。明示型引数でも一致検査は省略できず、関連型の出力だけから未選択のtrait instanceを推測しません。型引数にはSelf・trait instance・射影などの決定経路が必要です。
+
+型引数の宣言範囲を関連型要求がすべて受け入れられる必要があります。通常の`type Item`へ`[allowunique Item]`を束ねると暗黙縮小、`[unique Item]`なら矛盾として拒否します。`unique type Item`には`[unique Item]`を使います。`allowunique type Item`には三分類のいずれでも明示的に対象を選べます。同じ能力を違う対象へ明示すること自体は禁止しません。
+
+提供メソッドのSelf範囲は、無指定の`impl P`がコピー可能のみ、`impl unique P`がuniqueのみ、`impl allowunique P`が両方です。trait自身の能力を無指定implへ暗黙に引き継ぎません。宣言したSelf範囲全体をtraitが受け入れることを確認し、その後に明示した関連型条件等を適用します。コピー可能専用Pへのimpl allowunique P等を、交差だけ取って受理しません。
+
+普通の型を主語とするimplではSelf修飾を使わず、型宣言・型引数条件・所有構造から能力を導きます。提供範囲の分割から準拠宣言の分割を自動的に許可しません。提供メソッドの衝突、pub、trait所有モジュール、所有モード一致は通常規則のままです。
+
 ## トレイトの定義（要求と提供メソッド）
 
 トレイト本体には型が満たすべき**要求**だけを書きます（すべて本体なし）。フィールド要求・メソッド要求・関連値要求・関連型・**factory 要求**があり、各型は準拠時に `via`／本体で必ず witness します（後述「トレイト準拠と via」）。
@@ -46,7 +96,7 @@ impl Counter as Stepper {
 
 - **`impl Trait` の `self` は準拠型**（`Self: Trait`）。提供メソッドは `self` 経由で要求や同じ `impl Trait` 内の他メソッドを呼べる。本体はトレイトのインターフェースに対して**一度だけ**型検査される。
 - **トレイト所有モジュールの `impl Trait` だけがベア提供メソッドを定義できる**（型の inherent `impl Type` と同じ「所有者のみ」コヒーレンス）。`pub impl Trait` は外部 surface、修飾なし `impl Trait` は所有モジュール内限定です。第三者がトレイトに提供メソッドを足す（`itertools` 的）のは**名前付き拡張** `extension X { impl Trait { … } }` で行い、使用箇所で `#X` を明示して opt-in する（→ [拡張](09-extensions.md)）。
-- **トレイト間準拠 `impl B as A` も同じ**：`B` の全準拠型を別トレイト `A` へ準拠させる宣言は、**主語トレイト `B` を所有するモジュール内だけ**ベアに書ける（準拠は `B` 準拠型のベア表面に自動随伴）。`A` を所有するだけでは不可で、`A` owner が外部の `B` を `A` へ準拠させたい場合は `extension` 経由で `#Ext` opt-in する。複数経路で同じトレイトに届く衝突は `#` で経路を選び、trait-to-trait conformance の cycle は receiver や利用を待たない構造エラーとして reject する（→ [拡張：トレイト間準拠の衝突](09-extensions.md#トレイト間準拠の衝突は-でパスを選ぶ)、[トレイト間準拠の循環](09-extensions.md#トレイト間準拠の循環は構造エラー)）。頭なし型変数 `impl[T] T as A where T: B` は禁止（錨が無く列挙不能）で、主語トレイト `B` を錨にした `impl B as A` で書く。
+- **トレイト間準拠 `impl B as A` も同じ**：`B` の全準拠型を別トレイト `A` へ準拠させる宣言は、**主語トレイト `B` を所有するモジュール内だけ**ベアに書ける（準拠は `B` 準拠型のベア表面に自動随伴）。`A` を所有するだけでは不可で、`A` owner が外部の `B` を `A` へ準拠させたい場合は `extension` 経由で `#Ext` opt-in する。複数経路で同じトレイトに届く衝突は `#` で経路を選び、trait-to-trait conformance の cycle は receiver や利用を待たない構造エラーとして reject する（→ [拡張：トレイト間準拠の衝突](09-extensions.md#トレイト間準拠の衝突は--でパスを選ぶ)、[トレイト間準拠の循環](09-extensions.md#トレイト間準拠の循環は構造エラー)）。頭なし型変数 `impl[T] T as A where T: B` は禁止（錨が無く列挙不能）で、主語トレイト `B` を錨にした `impl B as A` で書く。
 - **公開提供メソッドだけが準拠で自動随伴**：`impl A as Trait` を書けば A は `pub impl Trait` の提供メソッドをベア表面に得、`where T: Trait` 越しにも使える。修飾なし `impl Trait` の helper は外部に随伴しない。出どころは「明示した準拠／境界のトレイト」と「公開された提供メソッド」なので provenance は追える（ambient ではない）。
 - **上書き不可**：準拠側 `impl Type as Trait`（`as` あり）が witness するのは**要求だけ**。提供メソッドに別の本体を与える（上書き）ことはできない。挙動を変えたい型は名前付き `extension` に別実装を置き `#Ext` で選ぶ（Swift の protocol extension に伴う静的／動的ディスパッチの食い違いを避けるため）。
 
@@ -217,6 +267,8 @@ impl Sprite as Drawable {
 
 同名の要求が複数ある（要求がオーバーロードされている）トレイトも、左辺のシグネチャで一意に witness できます。
 
+一つの準拠要求のvia先を、コピー可能用／unique用の排他的な候補群で満たすこともできます。準拠宣言の全適用範囲で要求を一意に満たし、共通の呼び出し・所有モード・関連型契約が一致することが必要です。候補・条件・witnessの根拠を宣言時に確定し、具体化時の任意の再探索で補いません。同じ型・trait instanceの準拠宣言そのものを能力条件で分割する機能は提供しません。
+
 ### 準拠の可視性（`pub impl`）
 
 準拠も他の `impl` と同じく**ブロック単位の可視性**を持ちます（→ [メンバの可視性](05-structs-enums.md#トレイト準拠の可視性)）。**`pub impl Type as Trait { … }` は公開準拠**で、`Type` が見える所どこでもその準拠が与えるメソッドを（トレイト名を書かずに）呼べます。修飾なし `impl Type as Trait { … }` は**内部準拠**で、準拠の事実はモジュール内で成立し `where T: Trait`／`any Trait` に使えますが、外部からメソッドを呼ぶと可視性エラーになります（内部用ヘルパトレイトへの準拠を閉じるのに使う）。Plew はトレイトメソッドをレシーバ型だけで解決し use を要さないため、Rust の「トレイトがスコープに無ければ呼べない」が自然には効かず、**隠す軸はこの `pub impl` か否か**になります。外部到達は「型の `pub`」＋「`pub impl`」で決まります（coherence の大域事実である準拠そのものは隠さず、隠すのはメソッドアクセス）。
@@ -262,9 +314,51 @@ for val s in shapes {
 
 `any P` は**第一級の型**で、型を書ける場所すべて（変数・フィールド・引数・戻り値・ジェネリック引数 `Array[any P]`・関連型束縛・[newtype](10-newtype.md) の underlying）に置けます。戻り値にも使えるので、具体型を隠す opaque な戻り（Swift の `some`）は別に設けず、存在型 `any` に一本化します。
 
+### コピー能力による二分類
+
+| 存在型 | 注入できる具体Self | 存在型自身 |
+|---|---|---|
+| any P | コピー可能型のみ | コピー可能 |
+| any unique P | unique型のみ | unique |
+
+`any allowunique P`は認めません。二分類は別の型であり、両方向の暗黙変換と、その変換用の特別な明示変換を提供しません。コピー可能値を消費して渡すことを理由にany unique Pへ注入することもできません。trait自身のSelf範囲も満たす必要があるので、コピー可能専用Pに対するany unique P、unique専用Pに対するany Pは拒否します。allowunique traitに対しても、利用箇所ではどちらの存在型かを指定します。
+
+関連型の能力と存在型Selfの能力は独立です。`any Producer[Item = Job]`はJobがuniqueでも、格納するSelfがコピー可能ならコピー可能です。返す新しいJobの所有権と、存在型自体のコピーを混同しません。sendabilityは同じ分類へ追加する独立の保証で、`any unique sendable P`も表現できます。保証消去は同じコピー能力分類の中だけで認め、unique指定からsendableは導きません。
+
+提供メソッドはany Pからコピー可能Self用と共通版、any unique Pからunique Self用と共通版を使えます。関連型・公開性・下記のSelf入出力制限も満たす必要があります。uniqueのmove receiver／引数は箱を含めて一度だけ消費します。borrow/inoutは通常の呼び出し区間に従い、inoutの書き戻しでは開いた具体型を固定し、別の具体型へ入れ替える機能にはしません。
+
+### generic呼び出しでの暗黙opening
+
+存在型そのものをTへ束縛して宣言条件を満たせる場合、そのまま渡します。中の具体Selfに対するtrait準拠が必要な場合だけ、保持するwitnessを使ってそのSelfを開きます。存在型自身をtraitへ自動準拠させる規則ではありません。
+
+```plew
+fn equalToItself[T](value: T) -> Bool where T: Eq {
+    return value == value
+}
+fn example(value: any Eq) {
+    equalToItself(value)  // OK: 一つの隠れSelfをTとして扱う
+}
+```
+
+無制約の`box[T](value: T) -> Box[T]`ならTはany Pのままで、結果もBox[any P]です。T: Pを要求するならopeningが必要です。明示型引数を勝手に置き換えず、能力だけで満たせる条件のためには中を開きません。関連型束縛・sendable保証・所有モード・評価順を保持し、opening失敗を理由に別overloadや別解釈へ後戻りしません。
+
+独立した二つの存在型から同じ隠れTは保証できないため、同じTを要求する二引数関数へ渡しても拒否します。any Eq同士の直接比較も拒否し、同じ変数を二度書いたときだけ比較を許す例外や、実行時型一致による救済は追加しません。Container[any P]をContainer[T]へまとめて開くこともしません。
+
+### 結果の再消去の範囲
+
+メンバdispatchと暗黙openingの結果に同じ規則を使います。
+
+- 直接のSelf／開いたTは、元のtrait instance・関連型束縛・copyable/unique分類・sendable保証を保つ存在型へ戻します。
+- 完全に束縛済みの関連型と、隠れSelfに依存しない型は、決定済みの型のまま返します。
+- ラベル付き無名レコードには要素ごとに同じ規則を適用します。ただしunique要素を含む無名レコードの禁止は維持します。
+- Box[Self]、Optional[Self]、Array[Self]等の名目genericをBox[any P]等へ自動変換しません。隠れSelfが外へ出るその呼び出しを拒否します。
+- 隠れSelfを含む関数型も、変換用closureを合成して救済しません。
+
+結果を表現できなかったことを理由に、opening済みTを存在型自身の束縛へ変更したり、別overloadへ戻ったりしません。入力・結果を通じて、借用の返却や公開ライフタイムは追加しません。
+
 ### 存在型の sendability
 
-無印の **`any P` は常に nonsendable** です。実行時にたまたま sendable な具体値だけが入っていても、型消去時に sendability 保証を保持していないため、whole-program の流入集合から保証を暗黙に回復しません。別スレッドへ送れる存在型は **`any sendable P`** と明示します。
+無印の **`any P` / `any unique P` は常に nonsendable** です。実行時にたまたま sendable な具体値だけが入っていても、型消去時に sendability 保証を保持していないため、whole-program の流入集合から保証を暗黙に回復しません。別スレッドへ送れる存在型は、分類に応じて`any sendable P` / `any unique sendable P`と明示します。
 
 ```plew
 val local: any Drawable = circle
@@ -276,8 +370,8 @@ spawn { render(transferable) } // OK
 
 `any sendable P` へ具体値を注入するとき、その具体型が sendable でなければコンパイルエラーです。保証の変換は [`sendable fn` と通常の `fn`](../01-basics/04-functions.md#sendable-クロージャ) と同じ向きに限定します。
 
-- `any sendable P` → `any P` は、保証を捨てるだけなので暗黙変換できる。
-- `any P` → `any sendable P` は不可。中身が実際には sendable でも、消去済みの保証を後から回復しない。
+- `any sendable P` → `any P`、`any unique sendable P` → `any unique P`は同じコピー能力分類の保証消去として暗黙変換できる。
+- `any P` → `any sendable P`、`any unique P` → `any unique sendable P`は不可。中身が実際には sendable でも、消去済みの保証を後から回復しない。
 - `any sendable P` は `[sendable T]` を満たすが、`any P` は満たさない。
 - `any P` をフィールド/payloadに持つ外側は nonsendable。`any sendable P` は sendable な構成型として通常の構造的導出に参加する。
 
@@ -311,9 +405,9 @@ any Add[I32, Output = I32]          // OK
 
 ### 呼べるメンバ・呼べないメンバ（使用箇所で診断）
 
-`any P` という**型を作ること自体は常に valid** です。「このトレイトは存在型にできない」という型レベルの一律禁止は持ちません。代わりに**個々のメンバが呼べるかを使用箇所で判定**します。直感は「自分自身への操作・結果を返す操作は OK、自分と同じ未知の型の値を受け取る操作は NG」。
+Selfのコピー能力と型引数・関連型の束縛条件を満たせば、メンバにSelf入力があることだけでは存在型の形成を禁止しません。代わりに**個々のメンバが呼べるかを使用箇所で判定**します。直感は「自分自身への操作・結果を返す操作は OK、自分と同じ未知の型の値を受け取る操作は NG」。
 
-- **呼べる**：`self` を受け取り、`Self` が**出力位置にしか出ない**メンバ。出力の `Self` はレシーバと同じ保証の存在型へ再消去される（`any P` 越しなら `any P`、`any sendable P` 越しなら `any sendable P`）。関連型は具体型に確定しているので入力に現れても問題ない（`any Add[I32, Output = I32]` で `add(lhs~: any, rhs~: I32)` は呼べる）。
+- **呼べる**：`self` を受け取り、`Self` が**出力位置にしか出ず、上記の再消去範囲で表現できる**メンバ。直接の `Self` はレシーバと同じ保証の存在型へ再消去される（`any P` 越しなら `any P`、`any sendable P` 越しなら `any sendable P`）。関連型は具体型に確定しているので入力に現れても問題ない（`any Add[I32, Output = I32]` で `add(lhs~: any, rhs~: I32)` は呼べる）。
 - **呼べない**：
   - `Self` が**非レシーバの入力位置**に現れるメンバ（`Eq` の `eq(lhs~: Self, rhs~: Self)` の `rhs`）。2 つの `any Eq` の具体型が一致する保証がないため、**その呼び出し行で**エラー。
   - **関連関数・factory**（`self` を受けない＝witness を運ぶレシーバが無い。`From.from` など）。
@@ -324,9 +418,9 @@ fn f(a: any Eq, b: any Eq) {        // 型として持つ・配列に入れる�
 }
 ```
 
-全要求が呼べない `any P`（`any Eq` 単独など）も型としては valid ですが実質使い道が無いので、lint で気づかせます（ハードエラーにはしません）。
+直接呼べる要求がない`any Eq`等も、形成条件を満たせば型として保持・受け渡しできます。必要なgeneric呼び出しでは前述の暗黙openingを使えるため、直接dispatchできないことだけを根拠に無用途のlintを要求しません。
 
-> **実装は最終フェーズ。** 存在型は動的ディスパッチ機構（witness を実行時に持ち回る）を要するため、コンパイラの他部分が固まってから実装します。ただし**言語仕様としては確定**です（Plew = *Programming Language for Everyday Wizard*。トレイトの配列を Swift のように素直に書けることを優先する）。
+存在型のdispatchは、選択済みのwitnessと保持する保証に従います。実装の完成・未対応範囲は言語の形成規則とは区別します。
 
 ### ダウンキャストは無い
 

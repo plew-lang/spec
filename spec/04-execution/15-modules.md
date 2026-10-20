@@ -102,6 +102,25 @@ exit(code: <ExitCode.status code=42U8 />)
 
 > 言語アイテムは**言語が提供する唯一の ambient な名前**で、キーワードと同じくユーザーがこれに足したり別の ambient を作ったりはできません（自前定義は必ずモジュールスコープ）。出どころは「ローカル束縛 → ファイルの `use` → 言語アイテム」で常に辿れ、言語アイテム名はローカル再宣言（[shadowing](../01-basics/03-values.md#再宣言shadowing)）で覆えます。
 
+### 標準ライブラリの所有と公開経路
+
+標準パッケージの宣言所有は次の通りです。既存の公開経路を保ち、再公開は元の宣言identityを運ぶ通常のpub useで行います。標準配布物に含まれることだけで、別モジュールのprivate factoryへアクセスできるわけではありません。
+
+| パッケージ | 所有する公開面 |
+|---|---|
+| `@Std/Core` | 数値・String等の定義と基礎trait、Buffer、Ref / MutableRef / FrozenRef / WeakRef / Weakable、drop / replace、基礎format・変換 |
+| `@Std/Hash` | Hash / Hasherとhashの公開API |
+| `@Std/Lang` | Coreの言語アイテム再公開、Optional / Result / Array / Dictionary / range / Promise / JoinHandleの定義と実装 |
+| `@Std/Sync` | MutexRef / MutexGuard、チャネル端点・構築・操作結果・取消制御 |
+| `@Std/Async` | 明示useするtimer等のasync helper。別のPromiseやschedulerは定義しない |
+| `@Std/Set`, `@Std/Random` | 既存のSet・Random API。言語アイテムへ追加しない |
+| `@Std/Ffi` | 外部ポインタ・明示FFIの公開面 |
+| `@Std/Io`, `@Std/Process`, `@Std/Http`, `@Std/Testing` | 機能別サービスとテストAPI |
+
+Langの公開面へ任意の型を足してambientを拡張することはできません。言語アイテムは上記の固定リストだけです。trait名、共有参照型、Syncの名前、drop / replaceは明示useを要します。既に選択された型のメソッド呼び出しや`.*`の実行時に、その型名・trait名を再解決する必要はありません。
+
+CoreはSync等へ逆useせず、HashはCore、LangはCore/Hash、SyncはCore/Langの基礎を使います。固定の言語アイテムの宣言登録を本体検査より先に行い、ambient型参照を逆useやsource cycleの許可とは解釈しません。I/O等の実際の依存は明示したuseのDAGで決まり、Coreが高位サービスを読み込む前提にはしません。物理ファイル・native runtime・配布バイナリの分割は、この公開モジュール構成と同一である必要はありません。
+
 ## インポート
 
 取り込み宣言は `use <path>`、名前を選ぶ場合は `use <path> only { name, … }` と書きます。選択リストの前の `only` は必須です。`only` はそのファイルへ束縛する名前を制限し、モジュールの読み込みや実行を部分化するものではありません。再公開は `pub use` とします。
@@ -422,7 +441,7 @@ plew install @Tool        # 外部パッケージの bin をインストール�
 
 停止開始より前に外部呼び出しの境界を通ったC処理は継続してよく、外部Cの副作用・OSの活動の停止やnative操作の取消は保証しません。ただし、CからPlewへ戻る時点、およびcallbackでPlewへ入る時点では待機し、コード公開完了前にPlew管理下の処理を再開しません。停止と競合した新しい外部呼び出しは、境界への移行が先に確定した場合だけ開始できます。C処理の完了を全worker停止の必須条件にはせず、外部コード・外部資源の安全性と同期は通常の[FFI境界](#ffiの安全性と借用の責任)の責任に従います。
 
-`run` 中に遅延検査またはコンパイルが失敗した場合は、該当本体の実行を開始せず診断を報告し、アプリを停止状態にします。独立したコマンド実行は失敗として終了し、常駐する開発ホストは次の明示的なRestartを受け付けられます。失敗までに生じたI/Oなどの副作用は取り消しません。停止時にユーザーの全 `deinit` の完走を保証するものでもありません。未検査の本体に誤りがあるプログラムが途中まで動くことは `run` の契約であり、`check`・`build` の全体検査とは区別します。
+`run` 中に遅延検査またはコンパイルが失敗した場合は、該当本体の実行を開始せず診断を報告し、実行プロセスを失敗として終了します。外部の開発ホストは別の実行を明示的にRestartできますが、任意のPlewスタックから生存ホストへ復帰したり、同じ実行環境を再利用したりする保証はありません。失敗までに生じたI/Oなどの副作用は取り消しません。停止時にユーザーの全 `deinit` の完走を保証するものでもありません。未検査の本体に誤りがあるプログラムが途中まで動くことは `run` の契約であり、`check`・`build` の全体検査とは区別します。
 
 一回の実行環境は同じソース版・依存・設定に対応します。遅延読取り時に保存された別版を混入させてはならず、編集の反映は明示的なRestartで行います。検査・生成結果のキャッシュを再利用する場合も、入力・依存・設定・コンパイラの整合性を確認します。`check` 後の入力変更に対し、古い検査結果を新しい入力の保証として扱いません。再起動ではアプリ状態を作り直し、状態を保持したコード差し替えは行いません。
 
@@ -495,7 +514,7 @@ use @Std/Testing only { expect, expectEq, expectNe, expectApprox }
 
 `extern(c)` は外部コードを利用する責任境界です。コンパイラは、外部実装の読み書きが不明という理由だけで、借用中の外部関数呼び出しを拒否しません。FFI利用側は、外部コードへ渡すポインタの有効期間、読み書きの権限、所有権移譲、保持期間を確認し、Plewの `borrow` / `inout` / `move` / 破棄の規則を外部コードが破らないことを保証します。借用規則は境界を越えても有効であり、違反を必ずコンパイルエラーやpanicとして検出する保証はありません。安全なPlew APIで包む場合、この責任をラッパの実装者が引き受けます。
 
-Plew内の型・所有権・借用検査は通常どおり行います。外部呼び出しを含む関数全体を検査対象外にはしません。将来CからPlewへのcallbackを導入する場合も、再入によって生きている借用が消えることはなく、Plew側の処理はPlewの規則に従います。この責任規則だけでcallbackの未決仕様を追加するものではありません。
+Plew内の型・所有権・借用検査は通常どおり行います。外部呼び出しを含む関数全体を検査対象外にはしません。CからPlewへのcallbackでも、再入によって生きている借用が消えることはなく、Plew側の処理はPlewの規則に従います。公開・callbackの適格性は本章のexposeとC関数ポインタの契約に従います。
 
 外部呼び出しを受理することは、副作用がないとの宣言ではありません。最適化は未知の外部副作用を保守的に扱い、根拠なく呼び出しを消したり、外部から変更され得るメモリの読み書きを呼び出しの前後へ移動したりしません。外部effect注釈や新しい `unsafe` 構文は、この境界の利用条件にしません。`extern(plewIntrinsic)` はコンパイラが定義する床であり、その正しさを利用者責任へ移すものではありません。
 
@@ -504,7 +523,7 @@ Plew内の型・所有権・借用検査は通常どおり行います。外部�
 ABI は**コンパイラが定義する閉じた集合**（ユーザーが新 ABI を定義することはできない＝intrinsic 床と同じコンパイラ原始要素）なので、**文字列ではなく bareword** で書きます（use パスを直書きするのと同じ「本質的に文字列でない箇所はクォートなし」方針）。可読性のため**パレンで括る**：`extern(c)` / `repr(c)`。
 
 - 未知の ABI（`extern(florble)` 等）は **Plew 層で即 `unknown ABI` エラー**（曖昧はエラー・補完はする/忖度はしない）。文字列にしても集合は閉じる（Rust も `extern "florble"` はエラー）ので、bareword で失うものはない。
-- ABI 名にハイフンが要る場合（C の `C-unwind` 等）は camelCase で表す（`cUnwind`）。Plew の文脈キーワード（`inout`/`sendable`/`nonsendable`/`allowUnique`）と同じ綴り方針。
+- ABI 名にハイフンが要る場合（C の `C-unwind` 等）は camelCase で表す（`cUnwind`）。ABI名の規約であり、文脈キーワードの綴りとは別です。
 - コアライブラリの intrinsic 床も同じ記法＝**`extern(plewIntrinsic) { … }`**（旧 `extern "plew-intrinsic"` の bareword 化）。
 
 ### 役割（方向・レイアウト）× ABI の 2 軸
@@ -516,7 +535,7 @@ FFI は **役割キーワード × ABI 選択子**で表す。`extern` は「外
 | **外部関数／不透明型** | `extern(c) { fn … ; type … }` | **C 側**（本体なし） | C を呼ぶ・C の不透明型を受け取る |
 | **共有 struct** | `repr(c) struct Foo { … }` | **Plew 側**（レイアウト記述） | C と同一レイアウトの値型（C 関数へ渡す） |
 
-> Plew 関数を C へ**公開**する側（Plew→C）はスコープ外（上記「状態」参照）。本節は **C を呼ぶ／C の型を受け取る側**だけを定める。
+> 本節はCを呼ぶ／Cの型を受け取る側を定めます。Plew関数の外部公開とcallbackは、後述の`expose`とC関数ポインタの契約に従います。
 
 ```plew
 use @Std/Ffi only { CString }   // 文字列境界（点3）— 別途定義
@@ -612,7 +631,7 @@ repr(c) struct LLVMMCJITCompilerOptions {
 - **フィールドアクセス・JSX 構築・既定値は通常の Plew 機構そのまま**（新構文は struct ヘッダの `repr(c)` 1 つだけ）：`mut val o = <LLVMMCJITCompilerOptions OptLevel=2 />` の残りは既定 0、`o.OptLevel = 3` は通常の場所代入。
 - **sendability は通常 struct と同じ**：フィールドから構造的に導出する。raw FFI pointer / handle は sendable が既定なので、多くの `repr(c)` wrapper はそのまま `spawn` を越えられる。外部契約としてスレッド束縛がある値は `nonsendable repr(c) struct` または `nonsendable` な安全 wrapper として宣言する。
 - **`c` は C *言語*でなく C *ABI***（プラットフォーム標準の万能相互運用規約）。`repr(c)` の別レイアウトとして `repr(packed)`（詰め）等を後続 additive に足せる（property `stable` でなく contract で名付ける＝`packed` も「決定的」なので衝突しない）。
-- **向きを持たない**：`repr(c) struct` は C ABI レイアウトの値型というだけなので、`extern(c)` 関数へ渡す引数に使える。将来 C への公開側を定めれば同じ定義がそちらにも乗る（共有 struct は方向非依存）。
+- **向きを持たない**：`repr(c) struct` は C ABI レイアウトの値型というだけなので、`extern(c)` 関数へ渡す引数に使える。外部公開側でも、同じ定義を境界型の適格性に従って使います（共有structは方向非依存）。
 
 ポインタ越しに渡す「`&opts`」は **`inout` で書ける**（`CPtr` を表に出さない）：
 
@@ -657,6 +676,8 @@ val mod: Optional[Module] = LLVMParseIRInContext(ctx, buf)
 // 二重解放は型で排除され、通常実行中にスコープを抜けると deinit が確実に Dispose する。
 unique struct Module {
     val raw: LLVMModuleRef
+}
+impl Module {
     deinit { LLVMDisposeModule(self.raw) }
 }
 pub impl Module {
@@ -720,9 +741,8 @@ val m = LLVMModuleCreateWithNameInContext(cname.ptr, ctx)  // 呼び出し中有
 
 ### 外部 C ライブラリのリンク
 
-- **Plew は自己完結 C を吐く**：`extern(c) { type/fn }`・`repr(c) struct` から **C のプロトタイプ/typedef/struct を Plew 自身が生成**する（宣言の正本は Plew 側）。ゆえに**外部ヘッダの `#include` は不要**で、必要なのは**リンクだけ**（Plew の extern 宣言と実体の ABI 一致は FFI 本来の前提）。
+- **FFI宣言の正本はPlew側**：`extern(c)`・`repr(c)`の型と呼び出し規約をLLVM上で実現します。外部ヘッダの自動取込みは必要条件ではありませんが、Plew宣言と外部実体のABI一致はFFI利用者の責任です。
 - **どのライブラリをどうリンク／ビルドするか**（`c`/`cpp`/`rust`/`pkg-config` の祝福・ターゲット別宣言・ビルド駆動）は [パッケージ章「ネイティブ依存」](17-packages.md#ネイティブ依存c--c--rust--system-ライブラリ)を正典とします。`extern(c)` ブロックは純粋な宣言に保ち、**リンクはソース構文でなくマニフェスト関心**です。
-- **当面（pipe-to-clang）**：マニフェスト駆動の前は手でフラグを渡せます ── `plewc app.pw | clang -x c - $(llvm-config --ldflags --libs core) -o app`。
 - **C++ シムが要る場合**（libLLVM-C で足りず C++ API を使う時）：`extern "C"` を露出する `.cpp` を clang++ で別途コンパイルしてリンク。**Plew 側の言語機能は `extern(c)` のまま**（C++ には触れない）。シムのビルド指定はマニフェスト（パッケージ章）。
 
 ### 名前付きの外部公開（`expose`）

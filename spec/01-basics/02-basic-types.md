@@ -162,7 +162,7 @@ pub trait Format {
 ```
 
 - 出力先は呼び出し元の状態を更新するため `inout` で受けます。メソッドをgenericにし、一つのFormat実装で異なる出力先を扱います。
-- 今回は既存のgeneric制限に従います。通常の `[Output]` とString factoryの `[T]` はコピー可能型だけを受け取り、`inout`でもこの制約は解除されません。uniqueな出力先やString factory入力への対応拡張は別課題とし、今回allowUniqueを導入しません。補間にも独自のunique制限・暗黙コピーを追加せず、既存の型・receiver規則を適用します。
+- 通常の`[Output]`とString factoryの`[T]`はコピー可能型を受け取り、inoutでも制約は解除しません。allowuniqueの導入によって既存のFormat/TextOutput宣言を暗黙に広げず、uniqueな出力先・表示対象への拡張は別の仕様変更とします。補間独自の暗黙コピーは追加しません。
 - 失敗は出力先の関連型 `Error` で表し、そのまま伝播します。固定の `FormatError` へ変換して詳細を失う設計にはしません。`Output.Error` は制約から出どころが一意なので `Output#TextOutput.Error` と明示する必要はありません。
 - `format` 自身の失敗は、出力先から受け取ったエラーの伝播に限定します。子要素のformatを介した伝播も含みます。表示処理独自のエラーは生成せず、Optionsの構築・妥当性検査の失敗は通常のAPIと式で扱います。
 - 表示実装は同じ出力先へ断片や子要素を順に書けます。`write(String)` は一時文字列のヒープ確保を要求しません。リテラルは定数領域を参照でき、値引数もデータの複製を意味しません。既存文字列の共有・短い文字列の格納・安全な確保除去などは内部実装の課題です。
@@ -328,7 +328,7 @@ val first = buffer[0U64]
 [expression1, expression2, ...]
 ```
 
-`Array[T]` は**動的・伸長可能・連続**な **CoW 値型**のコレクション（`Vec<T>` / `List<T>` 相当）。コピーすると内部バッファを共有し、変更時にだけ複製します。要素は連続配置され、プリミティブは**ボックス化せずインライン格納**します（Java `int[]`・C# 配列モデル。`Array[U8]` や WASM ゼロコピーの前提）。**`unique` 要素は直接持てません**（generics はコピー可能な型に限定）ので、読み取り共有なら [`Ref`](03-values.md#ref--mutableref--weakref共有参照)、可変共有なら `MutableRef` 包み（`Array[Ref[T]]` / `Array[MutableRef[T]]`）にします（→ [ジェネリクス](../02-type-system/06-generics.md#型引数の能力マーカーallowunique--sendable)）。
+`Array[T]` は**動的・伸長可能・連続**な **CoW 値型**のコレクション（`Vec<T>` / `List<T>` 相当）。コピーすると内部バッファを共有し、変更時にだけ複製します。要素は連続配置され、プリミティブは**ボックス化せずインライン格納**します（Java `int[]`・C# 配列モデル。`Array[U8]` や WASM ゼロコピーの前提）。**`unique` 要素は直接持てません**（標準Arrayの[T]はコピー可能型に限定）ので、読み取り共有なら [`Ref`](03-values.md#ref--mutableref--weakref共有参照)、可変共有なら `MutableRef` 包み（`Array[Ref[T]]` / `Array[MutableRef[T]]`）にします（→ [ジェネリクス](../02-type-system/06-generics.md#型引数の能力マーカーunique--allowunique--sendable)）。
 
 - **唯一の配列型**。長さが型に乗る固定長配列 `[E; N]`（const generics）は持たない＝長さは常に実行時。型レベルの長さ安全が要る局所は名前付きフィールドの struct か実行時不変条件で代替する（需要が固まれば const generics は後付けで非破壊に足せる）。
 - **添字 `arr[i]` は `Index[U64] -> T`**（要素の値を返す。→ [型変換と演算子](../03-expressions/12-operators.md)）。**`count()`・添字・`0..<arr.count()` のレンジ要素はすべて `U64`** に揃えます（暗黙変換が無いので同型でないとキャストが要る ── 揃えることで `for val i in 0..<arr.count() { arr[i] }` がキャストレス）。`count()` は O(1)。符号なしゆえ**負添字は表現できず**、範囲外は panic（添字の意味を型で変えない＝[辞書](#辞書)と同じ）。幅は**固定 `U64`**（ポインタ幅の `USize` は採らない）＝**全ターゲットで同一意味論**にし、`I32` の 2³¹ 上限も回避するためです。
