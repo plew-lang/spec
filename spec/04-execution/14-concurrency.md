@@ -122,7 +122,7 @@ worker完了は本体のgive/returnだけではなく、自身のイベントル
 
 不変トップレベル/`assoc val` のストレージと、それが不変値として固定的に所有する backing はプロセスと同じ寿命を持つ **immortal allocation** です。immortal な所有辺には寿命管理の retain/release が不要で、spawn から読まれても atomic RC へ昇格しません。この寿命方針はsendabilityとは独立です。nonsendableな不変rootも、固定的に所有するbackingはimmortalにできます。`mut val`の現在値や、共有セル内の差し替えにより所有を失い得るallocationは、この固定backingとしてのretain/release省略の対象ではなく、通常実行中の再代入では旧値が通常どおりdropされます。ただし現在値もトップレベル所有根であるため、プロセス終了時に user `deinit` やフィールド破棄は保証しません。これは Swift/Rust と同じく、終了時専用の finalization 順序・閉店モード・`deinit` 依存グラフを言語仕様に持ち込まないためです。外部資源や OS には分からない意味的な片付けが必要な値は、トップレベル所有根ではなく `main` の通常スコープ、明示的な `close`/`shutdown`、または with-style のライフサイクル API に置きます。CoW 値をローカルへコピーしても immortal backing をそのまま共有でき、ローカル側を変更するときだけ通常どおり新しい backing を作ってから書き込みます。`MutableRef` の中へ後から格納される値など、可変な内部状態の allocation は immortal へ伝染せず通常どおり管理しますが、トップレベル所有根の共有参照が最後まで保持している cell と pointee は process exit で user `deinit` を保証しません。immortal であることを表す sentinel、header、静的 provenance などは観測できない内部方式です。
 
-トップレベル初期化中に spawn worker が不変トップレベル/`assoc val` を読む場合も、worker 側で初期化子を実行しません。未初期化の値なら root event loop 上の同じ memoize サンクを force し、worker は完了を待ってから初期化済みの immortal 値を読みます。worker を含む待ち合わせの輪ができた場合は、トップレベル初期化循環として検知した時点で panic します（→ [トップレベル await と並行初期化](15-modules.md#トップレベル-await-と並行初期化)）。
+トップレベル初期化からworkerを起動する場合、workerとその呼び先がアクセスし得るglobalを、起動元の静的な初期化依存へ含めます。必要なglobalが初期化済みになってから起動元の本体を開始するため、workerは初期化子を実行したりrootへforceを要求したりせず、同じ初期化済みの値を読みます。依存循環はコンパイルエラーです（→ [トップレベルawaitと並行初期化](15-modules.md#トップレベル-await-と並行初期化)）。
 
 ```plew
 val config: Config = loadConfig() // Config は sendable
