@@ -191,7 +191,7 @@ link = "static"                           # 外部 lib を静/動どちらで繋
 - **`link`（`"static" | "dynamic"`）は `[[native.system]]` 専用**＝外部システムライブラリを静的/動的どちらで繋ぐかの選択。バンドルした C/C++・Rust crate は「自分のプログラムに組み込む＝常に static」で選択肢がなく `link` を持ちません（crate の静/動は `Cargo.toml` の `crate-type` が決め、Plew は出た成果物を読んでリンク）。
 - **ターゲット条件付け（per-target の `unsupported`/差し替え）は現状持ちません**。「native の一部がターゲット非対応のときプログラムがどうフォールバックするか」は**パッケージの target サポート行列＝トップレベルの関心**で、per-dep のブール値では解けないため、入れるなら正しい階層で（additive）。Rust は `Cargo.toml` の `[target.'cfg()']`/`#[cfg]` で crate 内に条件分岐を持てます。
 - **C/C++・Rust・system(pkg-config) を祝福**（名指しサポート）。これ以外（cmake の巨大プロジェクト・Go 等）は v1 では **Rust ラッパクレート**か system library 経由で取り込みます。直接のプリビルドバンドル宣言は未対応です（下記「巨大ライブラリ」）。
-- **Plew 独自の任意コマンド実行を持たない**ことで、Plew が直接起動する入口は clang/cargo/pkg-config に限定され、サンドボックスのポリシーが書けます。Cargo が起動する `build.rs` や子プロセスは Rust host-exec closure として別途 provenance に含めます（任意コマンドのサンドボックスは原理的に困難＝SwiftPM も自動ビルドから締め出している）。
+- **Plew 独自の任意コマンド実行を持たない**ことで、Plew が直接起動する入口は clang/cargo/pkg-config に限定され、サンドボックスのポリシーが書けます。Cargo が起動する `build.rs` や子プロセスは Rust host-exec closure として別途 provenance に含めます。SwiftPMは[SE-0303](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0303-swiftpm-extensible-build-tools.md)でbuild/prebuild commandを提供します。Plewは独自の任意build hookを提供せず、許可するnative実行のclosureとpolicyを明示する設計です。
 
 ### C / C++（`[[native.c]]` / `[[native.cpp]]`）
 
