@@ -68,4 +68,4 @@ pub impl[T] Result[T, Infallible] {
 }
 ```
 
-これらは通常の読み借用 `fn` で、元のResultを消費・変更しません。現在のgenericのコピー可能型制限に従います。`ok()`と`value()`は別APIであり、エラー型によって同名メソッドの戻り値をOptionalから裸のTへ切り替えません。失敗しない文字列構築先は `Error = Infallible` とし、通常の補間・String factoryは完成したStringを返します。
+これらは通常の読み借用 `fn` で、元のResultを消費・変更しません。これらのAPIは通常の型引数[T, E]が許すコピー可能な範囲に限定します。uniqueなpayloadの所有権を取り出す場合は消費matchを使います。言語全体のgenericがuniqueを受け入れられないという制限ではありません。`ok()`と`value()`は別APIであり、エラー型によって同名メソッドの戻り値をOptionalから裸のTへ切り替えません。失敗しない文字列構築先は `Error = Infallible` とし、通常の補間・String factoryは完成したStringを返します。

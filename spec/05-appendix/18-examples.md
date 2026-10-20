@@ -35,10 +35,10 @@ extension AdvancedMath {
 
 async fn main() {
     // BasicMath ── 値を返す流れるような API（非破壊・チェーン可能）。
-    val basicResult = <Calculator current=0.0 />#BasicMath
+    val basicResult = (<Calculator current=0.0 />#BasicMath
         .add(value: 10.0)
         .add(value: 5.0)
-        .result()  // 15.0
+        .result())  // 15.0
 
     // AdvancedMath ── inout で self を直接変更する。
     // inout の呼び出しには可変束縛 mut val が要る（val 束縛の中身は変更できない）。

@@ -39,7 +39,7 @@ struct Point {
 
 macro role の可視性は `impl` と同型に扱う。外部モジュールから `@[X]` / `@[X(args)]` を使えるのは、(1) 既存宣言 `X` 自体がその位置から見える、かつ (2) `X` の所有モジュールが `pub macro X as ...` を公開している場合だけ。`macro X as ...`（`pub` なし）は所有モジュール内だけで有効。`pub macro` であっても `X` 自体が `pub` されていなければ、外部から `X` を名指せないので外部 derive としては使えない。
 
-マクロは生成メソッド（要求＝`derive(input: TopItemAst) -> String`）を提供し、**注釈対象項の構文木を受け取り生成 Plew ソースを `String` で返す**。`Derive` 系契約は通常 trait ではなく `macrointerface` として宣言され、`AST` 型とともに**構文/マクロ用ライブラリ**（当面 `@Plew/Syntax`・将来は外部共有パッケージ＝後述）が提供します。**入力型 = `TopItemAst`**（注釈対象のトップレベル項の値ツリー＝`Decl`〔struct/enum/fn〕・`Impl`・`Trait`・… のタグ付き union）。マクロは `match` で対象の種別に分岐する＝対象が何かを**明示**して扱う（struct 専用 derive は `Decl` だけ扱い他を弾く）。これは「コンパイラとマクロが唯一の同一 AST を読む（1 AST 原則）」の帰結で、マクロ専用の縮小 AST を作らない。
+マクロは生成メソッド（要求＝`derive(input: TopItemAst) -> String`）を提供し、**注釈対象項の構文木を受け取り生成 Plew ソースを `String` で返す**。`Derive` 系契約は通常 trait ではなく `macrointerface` として宣言され、`AST` 型とともに**構文/マクロ用ライブラリ**（`@Plew/Syntax`。依存と版の境界は後述）が提供します。**入力型 = `TopItemAst`**（注釈対象のトップレベル項の値ツリー＝`Decl`〔struct/enum/fn〕・`Impl`・`Trait`・… のタグ付き union）。マクロは `match` で対象の種別に分岐する＝対象が何かを**明示**して扱う（struct 専用 derive は `Decl` だけ扱い他を弾く）。これは「コンパイラとマクロが唯一の同一 AST を読む（1 AST 原則）」の帰結で、マクロ専用の縮小 AST を作らない。
 
 **`macrointerface` は host-only なマクロ実装契約で、通常 trait ではない。** 見た目は trait に近い要求集合だが、runtime conformance ではなく、生成コマンドが既知の契約として読む compile/host 側 interface である。したがって `where T: Derive`、`any Derive`、`impl B as Derive`、extension、trait-to-trait conformance には使えない。`macro Foo as I` の `I` は `macrointerface` として解決され、通常 trait を指定するとエラー。v1 で認める `macrointerface` は compiler/generator が package identity 付きで知る閉集合だけで、既知パッケージ以外での新規 `macrointerface` 宣言はエラーにする。
 
@@ -113,7 +113,7 @@ struct Config { }
 
 **String → AST 変換と受け渡しは derive `macrointerface` の提供メソッドが担う（中間層は不要）。** `macro X as Derive`（assoc）／`macro X as ParameterizedDerive`（instance）はそれぞれ**要求メソッド `derive(input: AST) -> String`**（ユーザー実装）に加え、**提供メソッド `deriveFromSource(source, span) -> String`**（構文ライブラリ提供＝「String を lex+parse して AST にし、`derive(input:)` へ委譲」）を持つ。ランナー（生成コマンド）はこの提供メソッドを呼ぶハーネスを合成・実行するだけ＝**ランナーは String↔String の版非依存な機械**で、AST 型に一切触れない（AST 型・parser はマクロが固定依存する構文ライブラリ版のもの）。詳細は architecture doc。
 
-**リッチな AST はコンパイラ外のライブラリに分離する（最終形）。** Rust が `rustc` と `syn` で**2 つのパーサ**を持ち同期に苦しむのを避けるため、Plew は self-host の利を活かし **lexer+parser+AST を 1 つのライブラリに切り出し、コンパイラもマクロもそれに依存**する構成を目指す（真実の源が 1 つ＝AST のバージョン違いのツラミを最小化）。ただし**現状パッケージ管理機構が無い**ため切り出しは後回しで、**当面は `@Plew/Syntax`（in-tree）が AST 型・lexer/parser・`Derive`/`ParameterizedDerive` macrointerface の提供メソッドを持つ一時的な置き換え**（パッケージ管理導入後に外部共有パッケージへ昇格）。
+**lexer・parser・ASTは共有構文ライブラリ`@Plew/Syntax`が所有し、compilerもマクロもそのライブラリへ依存します。** マクロ用の別parserや別ASTをrunnerが再実装しません。パッケージの選択・版のidentityは[パッケージ仕様](17-packages.md)に従い、互換でないproviderの依存グラフを同一のAST型へ混ぜません。String境界とhost単位の分離はcompiler設計が所有します。
 
 ### 生成用プログラムとトップレベル初期化
 
@@ -168,7 +168,7 @@ Plewが「生成物が古い」として拒否する範囲は、記録対象の�
 - ディレクティブ引数＝`ParameterizedDerive` 設定 struct のフィールド（`@[Name(a:32)]`＝`<Name a=32 />.derive(...)`）。
 - 出力＝**別ファイル `<Foo>.gen.pw`・原本不変・add-only**、`@[...]` でローダ自動 part。
 - ランナー（生成コマンド）＝**String↔String の版非依存な機械**（ハーネス合成→compile→run→stdout 回収）。AST 型・parser はマクロが固定依存する構文ライブラリ版のもの。
-- 構文ライブラリ＝当面 `@Plew/Syntax`（in-tree）・最終形は外部共有パッケージ（コンパイラもマクロも依存）。
+- 構文ライブラリ＝`@Plew/Syntax`（compilerもマクロも、選択された依存版へ接続）。
 - Eq/Hash/All 等は正規 derive。Ord は derive 不可。
 
 ## 未決事項
@@ -177,6 +177,4 @@ Plewが「生成物が古い」として拒否する範囲は、記録対象の�
 - 生成コマンドの名前・設定方法・source の渡し方（stdin/ファイル/リテラル＝実装時に最も楽な形で確定）。
 - **authoring 層（将来・additive）**：`String` 直書きはシンタックスハイライトが効かない。テンプレートファイル方式（ほぼ Plew の雛形を読み込んで穴埋め）や opt-in の `quote` を**コアを汚さず後付け**で足す。コア（AST in / String out）は不変。
 - **生トークン escape hatch**（関数形/DSL マクロを将来入れるなら `derive(input: TokenStream)` を additive に）。
-- マクロ自身のビルドと配布（パッケージ管理導入後・同一リポジトリ内か別パッケージか）。
-- 構文ライブラリの外部パッケージ切り出し（パッケージ管理導入後）。
 - [拡張システム](../02-type-system/09-extensions.md)（`#Extension`）との関係。

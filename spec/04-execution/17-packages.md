@@ -160,7 +160,9 @@ bin = [
 
 - 配布物は **Plew ソース**です（precompiled lib のリンクは一次手段にしない）。
 - ビルドは**消費側の `plewc` が fetch 済みソースから whole-program** で行います。
-- 速度は**ビルドキャッシュ**で回収します（hidden cost は可・hidden meaning は不可）。キーは **`compiler version × target × flags`** に、**不変な fetched 依存は lock の commit SHA・編集中の局所コード/`path` 依存は content/mtime** を掛けたハイブリッド（commit がある依存は content hash を別途計算しない＝[ロックファイル](#ロックファイルplewlock)と同じ姿勢）。
+- 速度は**ビルドキャッシュ**で回収します（hidden cost は可・hidden meaning は不可）。キーは **`compiler version × target × flags`** に、**不変な fetched 依存は lock の commit SHA・編集中の局所コード/`path`依存は内容identity** を掛けたハイブリッド（commit がある依存は content hash を別途計算しない＝[ロックファイル](#ロックファイルplewlock)と同じ姿勢）。
+mtime等は変更候補を絞る最適化に使えますが、それだけで内容一致を証明しません。再利用には記録した入力identityの妥当性が必要です。毎回の全入力再ハッシュを要求するものではなく、正しいキャッシュ無効化・内容identityの保持で費用を抑えられます。
+
 - **置き場は Cargo 流**＝**fetch ソースはグローバル一元 cache**（commit キーで content-addressed・read-only・同 commit を二度落とさない）、**コンパイル成果物は per-project**（whole-program 粒度。クロスプロジェクト共有はシンボルの content 安定化を要する将来課題）。`[tools]` の実体だけはグローバル content-addressed 共有（[tools](#tools開発時に-run-する外部実行ファイル)）。
 - 実行可能ビルドのエントリ選択は → [モジュール章「ビルド・実行」](15-modules.md#ビルド実行)。
 
@@ -188,7 +190,7 @@ link = "static"                           # 外部 lib を静/動どちらで繋
 ```
 
 - **kind はテーブルヘッダ**＝`[[native.c]]` / `[[native.cpp]]` / `[[native.rust]]` / `[[native.system]]`。**ヘッダ自体が判別子**なので各ブロックは**固定スキーマ 1 つ**＝判別子フィールド不要・スキーマ補完が確実に効き、**kind 外のフィールドはそもそも書けない**（illegal state を構造で排除）。
-- **`link`（`"static" | "dynamic"`）は `[[native.system]]` 専用**＝外部システムライブラリを静的/動的どちらで繋ぐかの選択。バンドルした C/C++・Rust crate は「自分のプログラムに組み込む＝常に static」で選択肢がなく `link` を持ちません（crate の静/動は `Cargo.toml` の `crate-type` が決め、Plew は出た成果物を読んでリンク）。
+- **`link`（`"static" | "dynamic"`）は `[[native.system]]` 専用**＝外部システムライブラリを静的/動的どちらで繋ぐかの選択。バンドルしたC/C++はstaticで組み込み、`link`を持ちません。Rust crateの静的／動的な成果物は`Cargo.toml`の`crate-type`が所有し、`Plew.toml`に同じ選択を重複して置きません。
 - **ターゲット条件付け（per-target の `unsupported`/差し替え）は現状持ちません**。「native の一部がターゲット非対応のときプログラムがどうフォールバックするか」は**パッケージの target サポート行列＝トップレベルの関心**で、per-dep のブール値では解けないため、入れるなら正しい階層で（additive）。Rust は `Cargo.toml` の `[target.'cfg()']`/`#[cfg]` で crate 内に条件分岐を持てます。
 - **C/C++・Rust・system(pkg-config) を祝福**（名指しサポート）。これ以外（cmake の巨大プロジェクト・Go 等）は v1 では **Rust ラッパクレート**か system library 経由で取り込みます。直接のプリビルドバンドル宣言は未対応です（下記「巨大ライブラリ」）。
 - **Plew 独自の任意コマンド実行を持たない**ことで、Plew が直接起動する入口は clang/cargo/pkg-config に限定され、サンドボックスのポリシーが書けます。Cargo が起動する `build.rs` や子プロセスは Rust host-exec closure として別途 provenance に含めます。SwiftPMは[SE-0303](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0303-swiftpm-extensible-build-tools.md)でbuild/prebuild commandを提供します。Plewは独自の任意build hookを提供せず、許可するnative実行のclosureとpolicyを明示する設計です。
@@ -216,8 +218,10 @@ C と C++（コンパイラ駆動と stdlib リンクだけが違う）。フィ
 
 - **crate は `crate-type = ["staticlib"]`（or `cdylib`）で `extern "C"` を晒す**＝Plew は `extern(c)` でそのシンボルを束縛します（C と同じ・cargo はリンクするシンボルを増やすだけ）。**Rust ABI は直接呼べない**ため、crates.io crate を使う場合も**間に C ABI を晒す薄い shim crate が不可避**で、`path` はその shim を指します。
 - **crates.io 依存・feature は crate の `Cargo.toml`/`Cargo.lock` が所有**（単一真実源 ── version を tag に寄せるのと同じ DRY で、`Plew.toml` に `features` を二重化しません）。
-- **Plew が駆動・所有**：runtime native artifact は消費側 build target の `--target`（クロスコンパイル）と profile（release/debug）で作ります。一方、derive provider / `[tools]` / build-time helper として実行される Rust crate は**開発者ホスト triple**で build し、target artifact とは別 cache / fingerprint / trust entry にします。同じ package が runtime 依存かつ host-exec 依存であれば、host 用と target 用の 2 instantiation が存在します。**fetch（`cargo fetch --locked`・ネット・content hash 検証）と build（`cargo build --locked --offline`・隔離）を分離**し、成果物 `.a` の場所は cargo の `--message-format=json` 出力から取得します（機構＝hidden cost）。
+- **Plew が駆動・所有**：runtime native artifact は消費側 build target の `--target`（クロスコンパイル）と profile（release/debug）で作ります。一方、derive provider / `[tools]` / build-time helper として実行される Rust crate は**開発者ホスト triple**で build し、target artifact とは別 cache / fingerprint / trust entry にします。同じ package が runtime 依存かつ host-exec 依存であれば、host 用と target 用の 2 instantiation が存在します。**fetch（`cargo fetch --locked`・ネット・content hash 検証）と build（`cargo build --locked --offline`・隔離）を分離**し、成果物の種類・場所・Cargo上のcrate/target情報は`--message-format=json`出力から取得し、Plewのadmitted build planと`--target`が定めるhost/target tripleへ結び付け、選択済みartifactとprovenanceをconsumerへ渡します（機構＝hidden cost）。
 - crate 側 `build.rs`（推移 crates.io 依存を含む）の信頼は Rust エコシステムに委ねます。Plew は cargo プロセスとその子プロセスを OS レベルで sandbox し、ネットワーク・書き込み先・入力 root を policy に閉じ、wall clock / random / undeclared env / host CPU probing など deterministic profile 外の観測を閉じるところまで担います。消費側に **Rust ツールチェーンが要り**、**`Plew.lock` に「cargo ビルド＝ビルド時にホストでコード実行」という解決事実と runtime native artifact provenance**を記録し、実行許可は user-local trust DB で初回承認を求めます。`build.rs` と cargo が起動する非 cargo/rustc executable（`cc`、`pkg-config`、`protoc`、python 等）とその入力は、runtime native build でも host-exec closure の一部です。実行を許すには manifest / resolved closure / sandbox policy で列挙され、tool identity/hash、入力 root、system library / dynamic loader closure、出力 artifact hash が lock/build provenance と trust key に入らなければなりません。closure 外 executable の起動、PATH 探索、undeclared filesystem/network input は runtime native build でも reject します。
+
+Rustの`cdylib`を選択した場合も、動的成果物の直接・推移loader closureは下記と共通のprovenance／cache／host-exec admission契約に従います。複数の成果物候補を一覧の先頭や拡張子推測で恣意的に選ばず、対象crate・artifact種別・targetから一意に定まらなければ診断します。
 
 ### system ライブラリ（`[[native.system]]`）
 

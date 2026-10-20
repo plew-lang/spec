@@ -246,7 +246,7 @@ loop {
 impl Iterator as Iterable {
     type Item = Self.Item
     type Iter = Self
-    fn iterator() -> Self { self }          // 値で返す＝コピー。`for x in someIter` は元の束縛を消費しない
+    fn iterator() -> Self { return self }          // 値で返す＝コピー。`for x in someIter` は元の束縛を消費しない
 }
 ```
 
