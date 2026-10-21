@@ -590,7 +590,7 @@ fn buildAdd(builder: LLVMBuilderRef, lhs: LLVMValueRef, rhs: LLVMValueRef, name:
 - **コピー可能・word サイズ**：中身はポインタ 1 語でビットコピー複製（整数ディスクリプタ扱い）。**`borrow`/`move` は書けない**（コピー可能型の規則どおり・[03 値・所有権](../01-basics/03-values.md)）。`val a = m; val b = m` は**同じ外部オブジェクトへの別名**を生むが、それは外部世界の話で Plew の値意味論・ARC の対象外（別名は普通に起きる＝境界の正直さ）。
 - **sendable が既定**：不透明ハンドルは 1 語の外部値として `spawn` / チャネル / join result を越えられる。これは C 側オブジェクトの thread-safety を Plew が保証する意味ではなく、Plew の race-free 保証は Plew 管理メモリに限られる。thread-affine / non-thread-safe なハンドルは、束縛作者が `nonsendable type` または `nonsendable` な安全 wrapper で明示する。
 - **deinit は走らない**：Plew は外部寿命を知らないので、ハンドルが捨てられても**自動解放しない**（生のままなら**リークも二重解放も起こり得る**＝承知で使う床）。
-- **C への射影は 1:1**：生成 C では Plew の型名をそのまま C 型名に使う。実体 `typedef` は include した C ヘッダ（`<llvm-c/Core.h>` 等）が供給。
+- **C ABI への射影は 1:1**：Plew側の不透明ハンドル宣言を、LLVM上でポインタ1語の外部値として表現する。外部ヘッダの取込みやCコード生成は前提とせず、Plew宣言とC側の実体のABI一致はFFI利用者が保証する（[外部Cライブラリのリンク](#外部-c-ライブラリのリンク)）。
 
 ```plew
 extern(c) {
