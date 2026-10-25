@@ -130,7 +130,7 @@ val b = a * <Vector x=2.0 y=2.0 />   // Mul[Vector]
 val c = a * 2.0                       // Mul[F64]
 ```
 
-`a * b` は `b` の型で `Mul[…]` の conformance を選びます。**同じ右オペランド型に複数の conformance は書けません**（同セレクタ・同シグネチャで衝突）。blanket なジェネリック impl（`Mul[T] where T: Scalar`）と具体 impl（`Mul[F64]`）の併存も不可（引数位置が generic vs 具体で混在＝オーバーロードの形不一致。specialization は無し）。
+`a * b` は `b` の型で `Mul[…]` の conformance を選びます。**同じ右オペランド型に複数の conformance は書けません**（同セレクタ・同シグネチャで衝突）。blanket なジェネリック impl（`Mul[T] where T: Scalar`）と具体 impl（`Mul[F64]`）の併存も不可です。右オペランドの位置で一方が未確定の型パラメータに依存し、同じ左オペランド型に対する候補間に、双方が具体型で異なる引数位置がないためです。一般のwhere制約で非重複を証明したり、具体implを優先するspecializationは行いません（[オーバーロード](../02-type-system/07-methods-impl.md#メソッドのオーバーロード)）。
 
 #### リテラルオペランドの型解決（型付きオペランドが決める・曖昧はエラー）
 
