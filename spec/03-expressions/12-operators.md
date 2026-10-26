@@ -130,7 +130,7 @@ val b = a * <Vector x=2.0 y=2.0 />   // Mul[Vector]
 val c = a * 2.0                       // Mul[F64]
 ```
 
-`a * b` は `b` の型で `Mul[…]` の conformance を選びます。**同じ右オペランド型に複数の conformance は書けません**（同セレクタ・同シグネチャで衝突）。blanket なジェネリック impl（`Mul[T] where T: Scalar`）と具体 impl（`Mul[F64]`）の併存も不可です。右オペランドの位置で一方が未確定の型パラメータに依存し、同じ左オペランド型に対する候補間に、双方が具体型で異なる引数位置がないためです。一般のwhere制約で非重複を証明したり、具体implを優先するspecializationは行いません（[オーバーロード](../02-type-system/07-methods-impl.md#メソッドのオーバーロード)）。
+`a * b` は `b` の型で `Mul[…]` の conformance を選びます。**同じ右オペランド型に複数の conformance は書けません**（同セレクタ・同シグネチャで衝突）。blanket なジェネリック impl（`Mul[T] where T: Scalar`）と具体 impl（`Mul[F64]`）の併存も不可です。同じ左オペランド型に対して右オペランド型を比較すると、T = F64で一致し得るためです。型パラメータを含むこと自体は禁止理由ではなく、常に異なることを保証できる区別位置がないことが理由です。一般のwhere制約で非重複を証明したり、具体implを優先するspecializationは行いません（[オーバーロード](../02-type-system/07-methods-impl.md#メソッドのオーバーロード)）。
 
 #### リテラルオペランドの型解決（型付きオペランドが決める・曖昧はエラー）
 
@@ -357,7 +357,7 @@ impl Optional[T] as Chain {
 
 ## Nil 合体演算子（`??`）は持たない
 
-Plew に `??` 演算子はありません（Rust と同じく**あえて入れません**）。Optional のフォールバックは `Optional.unwrapOr(fallback:)` メソッドで書き、eager（既定値）と lazy（クロージャ）を**引数型で明示的にオーバーロード**します：
+Plew に `??` 演算子はありません（Rust と同じく**あえて入れません**）。Optional のフォールバックは `Optional.unwrapOr(fallback:)` メソッドで書き、eager（既定値）と lazy（クロージャ）を**引数型で明示的にオーバーロード**します。両候補はreceiverの同じTを共有し、Tとfn() -> Tが同じになる有限の型代入はないため、通常の構造的な区別規則で共存できます：
 
 ```plew
 val port: I32 = configPort.unwrapOr(fallback: 8080)                       // eager（8080 は常に評価）
