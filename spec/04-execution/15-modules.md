@@ -210,10 +210,13 @@ use ./kebab-case      // ❌ エラー: ハイフンは使用不可
 pub struct PublicStruct { /* ... */ }
 pub fn publicFunction() { /* ... */ }
 pub trait PublicTrait { /* ... */ }
+pub extension PublicExtension { /* ... */ }
 pub val publicConst: I32 = 100
 ```
 
 型の公開は全メンバの公開を意味しません。メンバの公開は `pub impl` / `pub` フィールドで指定し、非公開メンバは定義モジュール内に留まります（→ [メンバの可視性](../02-type-system/05-structs-enums.md#メンバの可視性)）。
+
+extensionも、名前の公開と内部implの公開を独立に指定します。外部利用には両方の可視性が必要です。非公開extension内の `pub impl` は許容しますが、extension名を外部へ公開する効果はありません（→ [拡張名とメンバの公開](../02-type-system/09-extensions.md#拡張名とメンバの公開)）。
 
 ### 再エクスポート
 
@@ -222,6 +225,7 @@ pub val publicConst: I32 = 100
 ```plew
 pub use ./Models only { User, Post as Article }
 pub use @Json only { encode, decode }
+pub use ./Extensions only { Display } // 公開extensionを再公開。内部implの可視性は不変
 pub use ./Models           // 名前空間 Models を束縛して公開
 pub use ./Models as M      // 名前空間の別名を束縛して公開
 ```

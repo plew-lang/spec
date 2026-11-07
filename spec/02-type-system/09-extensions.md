@@ -90,6 +90,42 @@ fn example() {
 }
 ```
 
+## 拡張名とメンバの公開
+
+extension名の公開も[通常の宣言の公開規則](../04-execution/15-modules.md#公開と再公開)に従います。`pub extension Name { … }` は名前をモジュール外へ公開し、修飾なしの `extension Name { … }` は定義モジュール内だけで利用可能です。
+
+内部の `impl` は独立して公開を指定します。`pub impl` のメンバは外部利用の対象となり、修飾なしの `impl` のメンバは定義モジュール内に留まります。extension名を公開しても内部implを公開したことにはならず、内部の `pub impl` もextension名を公開しません。
+
+| extension宣言 | 内部impl | モジュール外からの利用 |
+|---|---|---|
+| `pub extension` | `pub impl` | extension名と対象型に到達でき、通常の適用条件を満たせば利用可能 |
+| `pub extension` | `impl` | 名前は取り込めるが、このimplのメンバは非公開 |
+| `extension` | `pub impl` | 宣言は有効。ただしextension名を外部から取り込めない |
+| `extension` | `impl` | 定義モジュール内だけで利用可能 |
+
+非公開extension内の `pub impl` はエラーにしません。これは[非公開型の公開メンバ](05-structs-enums.md#メンバの可視性)と同じ公開範囲の組合せであり、外部到達を与えないだけです。
+
+```plew
+// この例ではPersonをpubで公開し、利用側から到達可能とする
+// extensionはPersonの定義モジュールに置く
+pub extension Display {
+    pub impl Person {
+        fn displayName() -> String { return self.name }
+    }
+    impl Person {
+        fn localName() -> String { return self.name }
+    }
+}
+
+extension InternalDisplay {
+    pub impl Person {
+        fn displayName() -> String { return self.name }
+    }
+} // 有効。ただしInternalDisplayを他モジュールからuseすることはできない
+```
+
+外部から `person#Display.displayName()` を使うには、通常の `use` で公開extension名を束縛する必要があります。`person#Display.localName()` は別モジュールからは呼べません。選択use・名前空間・別名・`pub use` による再公開でも、この二つの公開指定は変わりません。再公開は元のextension宣言identityを保ち、内部メンバを追加公開しません。パッケージ外への到達には、さらに[ルート公開面と公開API閉包性](../04-execution/15-modules.md#公開面と外部到達)の通常規則を適用します。
+
 ## 拡張の制約
 
 拡張名は、型名・トレイト名・関数名・変数名・useによる名前空間名と同じモジュールスコープの名前衝突規則に従います（[同一スコープの名前衝突](../04-execution/15-modules.md#同一スコープの名前衝突)）。同名のtraitとextensionを併存させ、receiverへの適用可能性や引数の形で選び分けることはできません。以下の同名メソッドの規則は、メソッド源の名前自体の衝突を許すものではありません。
